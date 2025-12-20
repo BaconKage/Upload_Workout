@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Workout Validator - Universal</title>
+
+  <!-- Tailwind CDN (fine for testing) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- MediaPipe Pose -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <style>
+    /* UTILS */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #1f2937; }
+    ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+    .hidden { display: none !important; }
+
+    /* VIDEO CONTAINER */
+    .canvas-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 800px;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      margin: 0 auto;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+      aspect-ratio: 16/9;
+    }
+
+    /* LAYERS */
+    .layer { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+    /* LAYER 1: RECORDING (Webcam) */
+    #recordingLayer { z-index: 20; background: #000; }
+    #livePreview {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* Mirror */
+    }
+
+    /* LAYER 2: ANALYSIS (Playback) */
+    #analysisLayer { z-index: 10; background: #000; }
+    #playbackVideo { width: 100%; height: 100%; object-fit: contain; }
+    #outputCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
+
+    /* ANIMATIONS */
+    .recording-pulse { animation: pulse-red 2s infinite; }
+    @keyframes pulse-red {
+      0% { box-shadow: inset 0 0 0 0px rgba(239, 68, 68, 0.5); }
+      50% { box-shadow: inset 0 0 0 20px rgba(239, 68, 68, 0); }
+      100% { box-shadow: inset 0 0 0 0px rgba(239, 68, 68, 0); }
+    }
+
+    .history-item { transition: all 0.2s ease; border-left-width: 4px; }
+    .history-good { border-left-color: #22c55e; background-color: rgba(34, 197, 94, 0.1); }
+    .history-bad  { border-left-color: #eab308; background-color: rgba(234, 179, 8, 0.1); }
+  </style>
+</head>
+
+<body class="bg-gray-900 text-white min-h-screen font-sans p-6">
+
+  <div class="max-w-4xl mx-auto space-y-6">
+
+    <div class="flex justify-between items-center border-b border-gray-700 pb-4">
+      <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-green-400">
+        AI Form Validator
+      </h1>
+      <div class="flex gap-2 bg-gray-800 p-1 rounded-lg">
+        <button id="btnModeUpload"
+                class="px-4 py-1.5 rounded text-sm font-medium transition-colors bg-blue-600 text-white shadow-sm">
+          Upload File
+        </button>
+        <button id="btnModeCamera"
+                class="px-4 py-1.5 rounded text-sm font-medium transition-colors text-gray-400 hover:text-white">
+          Live Record
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 shadow-sm">
+        <label class="block text-gray-400 text-xs uppercase tracking-wider font-semibold mb-2">Exercise</label>
+        <select id="exerciseType"
+                class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white focus:ring-2 focus:ring-blue-500 outline-none">
+          <option value="pushup">Push-up</option>
+          <option value="squat">Squat</option>
+          <option value="curl">Bicep Curl</option>
+        </select>
+      </div>
+
+      <div id="uploadUI" class="bg-gray-800 p-4 rounded-lg border border-gray-700 col-span-2 shadow-sm">
+        <label class="block text-gray-400 text-xs uppercase tracking-wider font-semibold mb-2">Video File</label>
+        <input type="file" id="videoUpload" accept="video/*"
+               class="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer"/>
+      </div>
+
+      <div id="cameraUI" class="bg-gray-800 p-4 rounded-lg border border-gray-700 col-span-2 hidden flex flex-col justify-center shadow-sm gap-2">
+        <div class="flex justify-between items-center">
+          <label class="block text-gray-400 text-xs uppercase tracking-wider font-semibold">Camera Source</label>
+          <span id="cameraStatus" class="text-xs text-gray-400">Ready</span>
+        </div>
+
+        <div class="flex gap-3">
+          <select id="cameraSelect"
+                  class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-grow">
+            <option value="">Default Camera</option>
+          </select>
+
+          <button id="btnStartCamera"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold text-sm shadow-lg whitespace-nowrap">
+            Activate
+          </button>
+
+          <button id="btnRecord"
+                  class="hidden flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2 rounded-lg font-semibold text-sm shadow-lg whitespace-nowrap w-full justify-center">
+            <div class="w-2.5 h-2.5 bg-white rounded-full"></div><span>Start Recording</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="canvas-wrapper border border-gray-800 relative bg-black" id="videoContainer">
+      <div id="analysisLayer" class="layer">
+        <video id="playbackVideo" playsinline muted class="w-full h-full"></video>
+        <canvas id="outputCanvas" class="w-full h-full"></canvas>
+      </div>
+
+      <div id="recordingLayer" class="layer hidden flex items-center justify-center">
+        <video id="livePreview" autoplay muted playsinline></video>
+        <div class="absolute top-4 right-4 flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-full backdrop-blur-sm hidden z-50"
+             id="recordingIndicator">
+          <div class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+          <span class="text-xs font-bold text-white tracking-widest">REC</span>
+        </div>
+      </div>
+
+      <div id="loader" class="absolute inset-0 bg-gray-900/90 flex flex-col items-center justify-center hidden z-50">
+        <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p class="text-blue-400 font-mono animate-pulse">Initializing AI Model...</p>
+      </div>
+
+      <div id="startPrompt" class="absolute inset-0 flex items-center justify-center bg-gray-900 z-40 pointer-events-none">
+        <div class="text-center text-gray-500">
+          <svg class="w-16 h-16 mx-auto mb-4 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+          </svg>
+          <p class="text-lg font-medium">Ready to Analyze</p>
+          <p class="text-sm opacity-60">Upload a video or use Live Record</p>
+          <p class="text-xs mt-3 opacity-60">Tip: run on <b>http://localhost</b> or <b>https</b> for camera.</p>
+        </div>
+      </div>
+
+      <div id="replayOverlay" class="absolute inset-0 bg-black/70 flex items-center justify-center z-50 hidden backdrop-blur-sm">
+        <button id="btnReplay"
+                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full flex items-center gap-2 transition transform hover:scale-105 shadow-xl">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+          Replay Analysis
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div class="md:col-span-2 grid grid-cols-3 gap-4">
+        <div class="bg-gray-800 p-4 rounded-lg text-center border border-gray-700 shadow-sm">
+          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Reps Completed</p>
+          <p id="repCount" class="text-5xl font-bold text-white mt-1">0</p>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-lg text-center border border-gray-700 shadow-sm">
+          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Current Angle</p>
+          <p id="currentAngle" class="text-5xl font-bold text-blue-400 mt-1">--°</p>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-lg text-center border border-gray-700 shadow-sm">
+          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Feedback</p>
+          <p id="feedback" class="text-xl font-bold text-gray-500 mt-2">IDLE</p>
+          <p id="trackingSide" class="text-[10px] text-gray-500 mt-1">--</p>
+        </div>
+      </div>
+
+      <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col max-h-[250px] shadow-sm">
+        <div class="bg-gray-850 p-3 border-b border-gray-700 flex justify-between items-center">
+          <h3 class="text-xs font-bold text-gray-300 uppercase tracking-wider">Rep History</h3>
+        </div>
+        <div id="historyList" class="p-2 overflow-y-auto flex-1 space-y-2">
+          <p class="text-gray-500 text-sm text-center italic py-8 opacity-50">Complete a rep to see details</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ---------------------------
+    // ELEMENTS
+    // ---------------------------
+    const playbackVideo = document.getElementById('playbackVideo');
+    const livePreview   = document.getElementById('livePreview');
+    const canvas        = document.getElementById('outputCanvas');
+    const ctx           = canvas.getContext('2d');
+    const upload        = document.getElementById('videoUpload');
+    const loader        = document.getElementById('loader');
+    const startPrompt   = document.getElementById('startPrompt');
+    const replayOverlay = document.getElementById('replayOverlay');
+    const exerciseSelect= document.getElementById('exerciseType');
+    const historyList   = document.getElementById('historyList');
+
+    // UI
+    const recordingLayer     = document.getElementById('recordingLayer');
+    const analysisLayer      = document.getElementById('analysisLayer');
+    const btnRecord          = document.getElementById('btnRecord');
+    const recordingIndicator = document.getElementById('recordingIndicator');
+    const btnStartCamera     = document.getElementById('btnStartCamera');
+    const cameraStatus       = document.getElementById('cameraStatus');
+    const cameraSelect       = document.getElementById('cameraSelect');
+    const btnModeUpload      = document.getElementById('btnModeUpload');
+    const btnModeCamera      = document.getElementById('btnModeCamera');
+    const btnReplay          = document.getElementById('btnReplay');
+
+    // ---------------------------
+    // STATE
+    // ---------------------------
+    let pose = null;
+    let count = 0;
+    let stage = "up";
+    let currentRepMinAngle = 360;
+    let repStartTime = 0;
+    let historyData = [];
+
+    // Recorder
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let isRecording = false;
+    let cameraStream = null;
+
+    const CONFIG = {
+      squat:  { upThreshold: 160, downThreshold: 105, goodRepLimit: 120 },
+      pushup: { upThreshold: 155, downThreshold: 110, goodRepLimit: 120 },
+      curl:   { upThreshold: 150, downThreshold: 60,  goodRepLimit: 75  }
+    };
+
+    // ---------------------------
+    // HELPERS
+    // ---------------------------
+    function resetStats() {
+      count = 0;
+      stage = "up";
+      currentRepMinAngle = 360;
+      historyData = [];
+      document.getElementById('repCount').innerText = "0";
+      document.getElementById('currentAngle').innerText = "--°";
+      document.getElementById('feedback').innerText = "IDLE";
+      document.getElementById('trackingSide').innerText = "--";
+      historyList.innerHTML = '<p class="text-gray-500 text-sm text-center italic py-8 opacity-50">Complete a rep to see details</p>';
+      replayOverlay.classList.add('hidden');
+    }
+
+    function formatTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function addHistoryItem(repNum, status, angle, timestamp) {
+      if (historyData.length === 0) historyList.innerHTML = '';
+      const isGood = status === 'Good Rep';
+      const color = isGood ? 'text-green-400' : 'text-yellow-400';
+      const border = isGood ? 'history-good' : 'history-bad';
+
+      const div = document.createElement('div');
+      div.className = `history-item bg-gray-800 p-3 rounded flex justify-between items-center ${border} mb-2`;
+      div.innerHTML = `
+        <div>
+          <span class="font-bold text-sm">Rep ${repNum}</span>
+          <span class="text-xs text-gray-400 ml-2">at ${formatTime(timestamp)}</span>
+        </div>
+        <div class="text-right">
+          <div class="${color} font-semibold text-sm">${status}</div>
+          <div class="text-xs text-gray-500">${Math.round(angle)}° flex</div>
+        </div>
+      `;
+      historyList.insertBefore(div, historyList.firstChild);
+      historyData.push({ repNum, status, angle, timestamp });
+    }
+
+    function calculateAngle(a, b, c) {
+      const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+      let angle = Math.abs(radians * 180.0 / Math.PI);
+      if (angle > 180.0) angle = 360 - angle;
+      return angle;
+    }
+
+    function calculateInclination(shoulder, hip) {
+      const dx = Math.abs(shoulder.x - hip.x);
+      const dy = Math.abs(shoulder.y - hip.y);
+      return Math.atan2(dx, dy) * (180 / Math.PI);
+    }
+
+    function drawGlowLine(ctx, start, end, color) {
+      ctx.beginPath();
+      ctx.moveTo(start.x * canvas.width, start.y * canvas.height);
+      ctx.lineTo(end.x * canvas.width, end.y * canvas.height);
+      ctx.lineWidth = 8;
+      ctx.strokeStyle = color;
+      ctx.lineCap = 'round';
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = color;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(start.x * canvas.width, start.y * canvas.height);
+      ctx.lineTo(end.x * canvas.width, end.y * canvas.height);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#ffffff';
+      ctx.shadowBlur = 0;
+      ctx.stroke();
+    }
+
+    function drawGlowJoint(ctx, point, color) {
+      const x = point.x * canvas.width;
+      const y = point.y * canvas.height;
+
+      ctx.beginPath();
+      ctx.arc(x, y, 12, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = color;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, 2 * Math.PI);
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowBlur = 0;
+      ctx.fill();
+    }
+
+    function checkPauseCondition(type, landmarks, side) {
+      let sIdx, hIdx, wIdx;
+      if (side.includes("Left")) { sIdx = 11; hIdx = 23; wIdx = 15; }
+      else { sIdx = 12; hIdx = 24; wIdx = 16; }
+
+      const shoulder = landmarks[sIdx];
+      const hip = landmarks[hIdx];
+      const wrist = landmarks[wIdx];
+
+      if (wrist.y < (shoulder.y - 0.1)) return "Hands too High";
+
+      const torsoAngle = calculateInclination(shoulder, hip);
+
+      const shoulderDist = Math.abs(landmarks[11].x - landmarks[12].x);
+      const torsoDist = Math.abs(shoulder.y - hip.y);
+      const isFrontView = shoulderDist > (torsoDist * 0.5);
+
+      if (!isFrontView) {
+        if (type === 'pushup' && torsoAngle < 30) return "Standing Up";
+        if (type === 'squat' && torsoAngle > 65) return "Bending Over";
+        if (type === 'curl' && torsoAngle > 45) return "Too Bent Over";
+      }
+      return null;
+    }
+
+    // ---------------------------
+    // MODE SWITCH (no inline onclick)
+    // ---------------------------
+    function setMode(mode) {
+      stopCamera();
+      resetStats();
+
+      startPrompt.classList.remove('hidden');
+      recordingLayer.classList.add('hidden');
+      analysisLayer.classList.remove('hidden');
+
+      playbackVideo.src = "";
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (mode === 'upload') {
+        document.getElementById('uploadUI').classList.remove('hidden');
+        document.getElementById('cameraUI').classList.add('hidden');
+
+        btnModeUpload.classList.add('bg-blue-600', 'text-white');
+        btnModeUpload.classList.remove('text-gray-400');
+        btnModeCamera.classList.remove('bg-blue-600', 'text-white');
+        btnModeCamera.classList.add('text-gray-400');
+
+      } else {
+        document.getElementById('uploadUI').classList.add('hidden');
+        document.getElementById('cameraUI').classList.remove('hidden');
+
+        btnModeCamera.classList.add('bg-blue-600', 'text-white');
+        btnModeCamera.classList.remove('text-gray-400');
+        btnModeUpload.classList.remove('bg-blue-600', 'text-white');
+        btnModeUpload.classList.add('text-gray-400');
+
+        btnStartCamera.classList.remove('hidden');
+        cameraSelect.classList.remove('hidden');
+        btnRecord.classList.add('hidden');
+        cameraStatus.innerText = "Ready";
+      }
+    }
+
+    // ---------------------------
+    // CAMERA
+    // ---------------------------
+    async function getCameras() {
+      try {
+        // Ask permission (labels show only after permission)
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        cameraSelect.innerHTML = '';
+        if (videoDevices.length === 0) {
+          const option = document.createElement('option');
+          option.text = "No Camera Found";
+          cameraSelect.appendChild(option);
+          return;
+        }
+
+        videoDevices.forEach((device, index) => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.text = device.label || `Camera ${index + 1}`;
+          cameraSelect.appendChild(option);
+        });
+      } catch (err) {
+        console.error("Error listing cameras:", err);
+      }
+    }
+
+    async function startCamera() {
+      try {
+        cameraStatus.innerText = "Opening...";
+
+        // Secure context required for camera
+        if (!window.isSecureContext) {
+          alert("Camera requires HTTPS or http://localhost. Do NOT open via file://");
+          cameraStatus.innerText = "Blocked (HTTPS required)";
+          return;
+        }
+
+        const selectedId = cameraSelect.value;
+
+        let stream = null;
+        const tryConstraints = async (useExact) => {
+          const constraints = {
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              ...(selectedId
+                ? { deviceId: useExact ? { exact: selectedId } : { ideal: selectedId } }
+                : {})
+            },
+            audio: false
+          };
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        };
+
+        try {
+          stream = await tryConstraints(true);
+        } catch (e) {
+          console.warn("Exact deviceId failed, falling back:", e);
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+
+        cameraStream = stream;
+
+        livePreview.srcObject = cameraStream;
+
+        await new Promise((resolve) => {
+          livePreview.onloadedmetadata = () => resolve();
+        });
+
+        await livePreview.play();
+
+        startPrompt.classList.add('hidden');
+        analysisLayer.classList.add('hidden');
+        recordingLayer.classList.remove('hidden');
+
+        btnStartCamera.classList.add('hidden');
+        cameraSelect.classList.add('hidden');
+        btnRecord.classList.remove('hidden');
+        cameraStatus.innerText = "Active";
+
+      } catch (err) {
+        console.error("Camera Error:", err);
+        if (err.name === "NotAllowedError") alert("Camera permission denied. Allow camera in site settings (lock icon).");
+        else if (err.name === "NotFoundError") alert("No camera found on this device.");
+        else if (err.name === "NotReadableError") alert("Camera is being used by another app (Zoom/Teams/OBS). Close it.");
+        else alert("Could not start camera.\nError: " + err.message);
+        cameraStatus.innerText = "Error";
+      }
+    }
+
+    function stopCamera() {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+      }
+      livePreview.srcObject = null;
+    }
+
+    function toggleRecording() {
+      if (!cameraStream || cameraStream.getVideoTracks().length === 0) {
+        alert("Camera is not active. Click Activate first.");
+        return;
+      }
+
+      if (!isRecording) {
+        recordedChunks = [];
+
+        try {
+          mediaRecorder = new MediaRecorder(cameraStream);
+        } catch (e) {
+          alert("Browser not supported for recording.");
+          return;
+        }
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) recordedChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = () => completeRecording();
+
+        mediaRecorder.start();
+        isRecording = true;
+
+        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-sm"></div><span>End Workout</span>`;
+        btnRecord.classList.remove('bg-red-600');
+        btnRecord.classList.add('bg-gray-600');
+        recordingIndicator.classList.remove('hidden');
+        recordingLayer.classList.add('recording-pulse');
+        cameraStatus.innerText = "Recording...";
+
+      } else {
+        mediaRecorder.stop();
+        isRecording = false;
+
+        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-full"></div><span>Start Recording</span>`;
+        btnRecord.classList.remove('bg-gray-600');
+        btnRecord.classList.add('bg-red-600');
+        recordingIndicator.classList.add('hidden');
+        recordingLayer.classList.remove('recording-pulse');
+        cameraStatus.innerText = "Processing...";
+      }
+    }
+
+    function completeRecording() {
+      if (recordedChunks.length === 0) {
+        alert("Recording failed: No data captured.");
+        stopCamera();
+        setMode('camera');
+        return;
+      }
+
+      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+
+      stopCamera();
+      recordingLayer.classList.add('hidden');
+      analysisLayer.classList.remove('hidden');
+
+      playbackVideo.src = url;
+      playbackVideo.muted = true;
+      resetStats();
+
+      playbackVideo.onloadedmetadata = async () => {
+        canvas.width = playbackVideo.videoWidth;
+        canvas.height = playbackVideo.videoHeight;
+
+        try {
+          await playbackVideo.play();
+          processVideo();
+        } catch (e) {
+          console.error("Playback play blocked:", e);
+          alert("Browser blocked playback. Click anywhere and press Replay.");
+        }
+      };
+
+      playbackVideo.onended = () => {
+        replayOverlay.classList.remove('hidden');
+      };
+    }
+
+    // ---------------------------
+    // PROCESSING
+    // ---------------------------
+    async function replayVideo() {
+      resetStats();
+      playbackVideo.currentTime = 0;
+      try {
+        await playbackVideo.play();
+        processVideo();
+      } catch (e) {
+        console.error("Replay blocked:", e);
+      }
+    }
+
+    async function processVideo() {
+      if (!pose) return;
+      if (playbackVideo.paused && !playbackVideo.ended) return;
+      if (playbackVideo.ended) return;
+
+      try {
+        await pose.send({ image: playbackVideo });
+      } catch (e) {
+        console.error("pose.send failed:", e);
+        return;
+      }
+
+      requestAnimationFrame(processVideo);
+    }
+
+    // ---------------------------
+    // POSE RESULTS (Rep logic included)
+    // ---------------------------
+    function onResults(results) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!results.poseLandmarks) return;
+
+      const landmarks = results.poseLandmarks;
+      const type = exerciseSelect.value;
+      const cfg = CONFIG[type];
+
+      let a, b, c, trackedSide = "";
+
+      if (type === 'squat') {
+        const leftScore  = landmarks[23].visibility + landmarks[25].visibility + landmarks[27].visibility;
+        const rightScore = landmarks[24].visibility + landmarks[26].visibility + landmarks[28].visibility;
+
+        if (leftScore > rightScore) { a = landmarks[23]; b = landmarks[25]; c = landmarks[27]; trackedSide = "Left Leg"; }
+        else { a = landmarks[24]; b = landmarks[26]; c = landmarks[28]; trackedSide = "Right Leg"; }
+      } else {
+        const leftScore  = landmarks[11].visibility + landmarks[13].visibility + landmarks[15].visibility;
+        const rightScore = landmarks[12].visibility + landmarks[14].visibility + landmarks[16].visibility;
+
+        if (leftScore > rightScore) { a = landmarks[11]; b = landmarks[13]; c = landmarks[15]; trackedSide = "Left Arm"; }
+        else { a = landmarks[12]; b = landmarks[14]; c = landmarks[16]; trackedSide = "Right Arm"; }
+      }
+
+      let feedbackText = "Not detected";
+      let themeColor = "#ef4444";
+
+      document.getElementById('trackingSide').innerText = trackedSide || "--";
+
+      if (a && b && c && (a.visibility > 0.3 && b.visibility > 0.3 && c.visibility > 0.3)) {
+        const angle = calculateAngle(a, b, c);
+        document.getElementById('currentAngle').innerText = `${Math.round(angle)}°`;
+
+        const pauseReason = checkPauseCondition(type, landmarks, trackedSide);
+
+        if (pauseReason) {
+          themeColor = "#6b7280";
+          feedbackText = `Paused: ${pauseReason}`;
+          stage = "up";
+
+          ctx.save();
+          ctx.globalAlpha = 0.4;
+          drawGlowLine(ctx, a, b, themeColor);
+          drawGlowLine(ctx, b, c, themeColor);
+          ctx.restore();
+        } else {
+          if (angle < cfg.downThreshold) themeColor = "#22c55e";
+
+          drawGlowLine(ctx, a, b, themeColor);
+          drawGlowLine(ctx, b, c, themeColor);
+          drawGlowJoint(ctx, a, themeColor);
+          drawGlowJoint(ctx, b, themeColor);
+          drawGlowJoint(ctx, c, themeColor);
+
+          if (stage === "up") {
+            feedbackText = (angle < cfg.upThreshold) ? ((type === 'curl') ? "Fully Extend" : "Lock Out") : "Start";
+            themeColor = (angle < cfg.upThreshold) ? "#fbbf24" : "#3b82f6";
+
+            // Start the rep when reaching bottom (downThreshold)
+            if (angle < cfg.downThreshold) {
+              stage = "down";
+              feedbackText = "Push";
+              themeColor = "#22c55e";
+              repStartTime = playbackVideo.currentTime || 0;
+              currentRepMinAngle = angle;
+            }
+          } else if (stage === "down") {
+            // Track min angle during the rep
+            currentRepMinAngle = Math.min(currentRepMinAngle, angle);
+
+            // Rep completes when we return to the top (upThreshold)
+            if (angle > cfg.upThreshold) {
+              count += 1;
+              document.getElementById('repCount').innerText = String(count);
+
+              const isGood = currentRepMinAngle <= cfg.goodRepLimit;
+              const status = isGood ? "Good Rep" : "Bad Rep";
+              addHistoryItem(count, status, currentRepMinAngle, repStartTime);
+
+              feedbackText = isGood ? "Good Rep ✅" : "Go Deeper ⚠️";
+              themeColor = isGood ? "#22c55e" : "#fbbf24";
+
+              // Reset for next rep
+              stage = "up";
+              currentRepMinAngle = 360;
+            } else {
+              feedbackText = "Working...";
+              themeColor = "#22c55e";
+            }
+          }
+        }
+      } else {
+        document.getElementById('currentAngle').innerText = "--°";
+        document.getElementById('trackingSide').innerText = "--";
+      }
+
+      const feedbackEl = document.getElementById('feedback');
+      feedbackEl.innerText = feedbackText;
+    }
+
+    // ---------------------------
+    // INIT AI (SAFE)
+    // ---------------------------
+    async function initAI() {
+      loader.classList.remove('hidden');
+
+      // If Pose script didn't load, fail gracefully
+      if (typeof Pose === "undefined") {
+        loader.classList.add('hidden');
+        alert("MediaPipe Pose failed to load. Check your internet / CDN access.");
+        console.error("Pose is undefined. CDN might be blocked.");
+        return;
+      }
+
+      pose = new Pose({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+      pose.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      pose.onResults(onResults);
+
+      // Some versions don't require initialize(), but keep safe
+      try {
+        if (pose.initialize) await pose.initialize();
+      } catch (e) {
+        console.warn("pose.initialize failed (can be ok depending on version):", e);
+      }
+
+      loader.classList.add('hidden');
+
+      // Populate cameras
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        await getCameras();
+      } else {
+        console.warn("mediaDevices not available.");
+      }
+    }
+
+    // ---------------------------
+    // EVENTS (no inline onclick)
+    // ---------------------------
+    btnModeUpload.addEventListener("click", () => setMode("upload"));
+    btnModeCamera.addEventListener("click", () => setMode("camera"));
+    btnStartCamera.addEventListener("click", startCamera);
+    btnRecord.addEventListener("click", toggleRecording);
+    btnReplay.addEventListener("click", replayVideo);
+
+    upload.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      setMode('upload');
+      startPrompt.classList.add('hidden');
+
+      const url = URL.createObjectURL(file);
+      playbackVideo.src = url;
+      playbackVideo.muted = true;
+      resetStats();
+
+      playbackVideo.onloadedmetadata = async () => {
+        canvas.width = playbackVideo.videoWidth;
+        canvas.height = playbackVideo.videoHeight;
+
+        try {
+          await playbackVideo.play();
+          processVideo();
+        } catch (err) {
+          console.error("Video play blocked:", err);
+          alert("Browser blocked autoplay. Click anywhere once, then press Replay.");
+        }
+      };
+
+      playbackVideo.onended = () => replayOverlay.classList.remove('hidden');
+    });
+
+    // Boot safely AFTER everything is defined
+    window.addEventListener("load", async () => {
+      try {
+        await initAI();
+      } catch (e) {
+        console.error("initAI failed:", e);
+        alert("AI init failed. Check console for details: " + (e?.message || e));
+      }
+      // Default mode
+      setMode("upload");
+    });
+  </script>
+</body>
+</html>
