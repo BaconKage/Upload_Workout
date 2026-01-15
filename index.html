@@ -48,7 +48,6 @@
 
     #analysisLayer { z-index: 10; background: #000; }
 
-    /* ✅ uploaded playback visible */
     #playbackVideo{
       width: 100%;
       height: 100%;
@@ -103,18 +102,13 @@
     #controlsOverlay button:hover { background: rgba(255,255,255,0.14); }
     #controlsOverlay button.primary { background: rgba(37,99,235,0.85); border-color: rgba(37,99,235,0.9); }
     #controlsOverlay button.primary:hover { background: rgba(37,99,235,1); }
-    #controlsOverlay button.danger { background: rgba(220,38,38,0.9); border-color: rgba(220,38,38,0.9); }
-    #controlsOverlay button.danger:hover { background: rgba(220,38,38,1); }
     #controlsOverlay .meta {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size: 11px;
       color: rgba(255,255,255,0.75);
       white-space: nowrap;
     }
-    #scrubber {
-      width: 100%;
-      accent-color: #60a5fa;
-    }
+    #scrubber { width: 100%; accent-color: #60a5fa; }
 
     /* Floating annotation overlay */
     #annotationOverlay {
@@ -159,7 +153,6 @@
 
     #reportArea { overflow: visible; }
 
-    /* Small helper badge */
     #annoModeBadge {
       position: absolute;
       top: 12px;
@@ -196,6 +189,20 @@
       border: 1px solid #e5e7eb;
       border-radius: 10px;
       display: block;
+    }
+
+    /* ✅ Mobile: controls should NOT cover the video */
+    @media (max-width: 640px) {
+      #controlsOverlay {
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        padding: 8px 10px;
+      }
+      #controlsOverlay .row { gap: 8px; }
+      #controlsOverlay button { padding: 7px 9px; font-size: 11px; }
+      #controlsOverlay .meta { font-size: 10px; white-space: normal; }
+      #annotationOverlay { bottom: 64px; max-width: 92%; }
     }
   </style>
 </head>
@@ -268,13 +275,17 @@
 
         <div id="annoModeBadge">ANNOTATE MODE • Draw on frame • ESC to exit</div>
 
-        <!-- Floating overlay text -->
         <div id="annotationOverlay">
           <div class="title" id="annotationOverlayTitle">Annotation</div>
           <div class="body" id="annotationOverlayBody">—</div>
         </div>
 
-        <!-- Custom Controls -->
+        <!-- ✅ Floating Controls button (phone) -->
+        <button id="btnFloatControls"
+          class="hidden absolute top-4 right-4 z-[96] bg-black/60 text-white text-xs font-bold px-3 py-2 rounded-full border border-white/10 backdrop-blur">
+          Controls
+        </button>
+
         <div id="controlsOverlay"></div>
       </div>
 
@@ -525,6 +536,7 @@
     // ---------------------------
     // ELEMENTS
     // ---------------------------
+    const videoContainer = document.getElementById("videoContainer");
     const playbackVideo = document.getElementById('playbackVideo');
     const livePreview   = document.getElementById('livePreview');
     const canvas        = document.getElementById('outputCanvas');
@@ -585,6 +597,7 @@
 
     // Controls overlay container
     const controlsOverlay = document.getElementById("controlsOverlay");
+    const btnFloatControls = document.getElementById("btnFloatControls");
 
     // Controls refs (rebuilt dynamically)
     let btnPlayPause = null;
@@ -647,10 +660,16 @@
     };
 
     // ---------------------------
-    // MOBILE SAFETY HELPERS
+    // RESPONSIVE / MOBILE HELPERS
     // ---------------------------
-    function isMobileUA() {
-      return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    function isMobileUA() { return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent); }
+    function isPhoneLayout() {
+      return window.matchMedia && window.matchMedia("(max-width: 640px)").matches;
+    }
+
+    function showFloatingControlsButton(show) {
+      if (!btnFloatControls) return;
+      btnFloatControls.classList.toggle("hidden", !show);
     }
 
     function prepareVideoForMobile(videoEl) {
@@ -660,15 +679,14 @@
       videoEl.setAttribute("webkit-playsinline", "true");
       videoEl.controls = false;
     }
-
     prepareVideoForMobile(playbackVideo);
 
     // canvas sizing: match displayed size + DPR
     function fitCanvasToContainer() {
       const rect = playbackVideo.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-
       const dpr = window.devicePixelRatio || 1;
+
       canvas.width = Math.round(rect.width * dpr);
       canvas.height = Math.round(rect.height * dpr);
       canvas.style.width = rect.width + "px";
@@ -840,6 +858,39 @@
     }
 
     // ---------------------------
+    // CONTROLS (minimize policy)
+    // ---------------------------
+    function minimizeControls() {
+      if (!controlsOverlay) return;
+      if (controlsOverlay.classList.contains("minimized")) return;
+      toggleControlsMinimize();
+    }
+    function expandControls() {
+      if (!controlsOverlay) return;
+      if (!controlsOverlay.classList.contains("minimized")) return;
+      toggleControlsMinimize();
+    }
+
+    function applyResponsiveControlsPolicy() {
+      if (isPhoneLayout()) {
+        // On phones: prefer minimized always
+        minimizeControls();
+        showFloatingControlsButton(true);
+      } else {
+        // On desktop: floating button hidden
+        showFloatingControlsButton(false);
+        // restore overlay display if it was hidden during annotate on phone
+        controlsOverlay.style.display = "";
+      }
+    }
+
+    btnFloatControls.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (controlsOverlay.classList.contains("minimized")) expandControls();
+      else minimizeControls();
+    });
+
+    // ---------------------------
     // MATH / DRAWING
     // ---------------------------
     function calculateAngle(a, b, c) {
@@ -921,7 +972,7 @@
     }
 
     // ---------------------------
-    // ANNOTATION + SCREENSHOT CAPTURE
+    // ANNOTATION + SCREENSHOT
     // ---------------------------
     function getCanvasNormalizedPoint(evt) {
       const rect = canvas.getBoundingClientRect();
@@ -935,9 +986,7 @@
         alert("Upload/record a video first.");
         return;
       }
-      if (!playbackVideo.paused) {
-        safePauseVideo();
-      }
+      if (!playbackVideo.paused) safePauseVideo();
 
       annotateMode = true;
       currentAnnoTime = playbackVideo.currentTime || 0;
@@ -946,6 +995,12 @@
       currentStrokes = [];
       currentStroke = null;
       isDrawing = false;
+
+      // ✅ On phone: hide big overlay so it doesn't cover the frame
+      if (isPhoneLayout()) {
+        controlsOverlay.style.display = "none";
+        showFloatingControlsButton(true);
+      }
 
       setCanvasCursor();
       annotationOverlay.style.display = "none";
@@ -961,6 +1016,14 @@
       annoTimeEl.innerText = "--";
       if (!silent) annoTextEl.value = "";
       setCanvasCursor();
+
+      // ✅ restore overlay after annotate
+      controlsOverlay.style.display = "";
+      if (isPhoneLayout()) {
+        minimizeControls();
+        showFloatingControlsButton(true);
+      }
+
       renderFrame();
     }
 
@@ -1024,13 +1087,10 @@
 
         offCtx.fillStyle = "#000";
         offCtx.fillRect(0, 0, w, h);
-
-        // iOS: drawImage can fail if frame not ready -> ensureVideoFrameReady above
         offCtx.drawImage(playbackVideo, 0, 0, w, h);
 
         drawStrokesOnContext(offCtx, strokes, w, h);
 
-        // compress slightly for mobile memory
         const q = isMobileUA() ? 0.82 : 0.9;
         return off.toDataURL("image/jpeg", q);
       } catch (e) {
@@ -1040,15 +1100,10 @@
     }
 
     async function saveAnnotation() {
-      if (!annotateMode) {
-        alert("Click Annotate Frame first (or press A).");
-        return;
-      }
+      if (!annotateMode) return alert("Click Annotate Frame first (or press A).");
       const text = (annoTextEl.value || "").trim();
-      if (!text) {
-        alert("Please enter annotation text.");
-        return;
-      }
+      if (!text) return alert("Please enter annotation text.");
+
       if (currentStrokes.length === 0) {
         const ok = confirm("No drawing found. Save text-only annotation?");
         if (!ok) return;
@@ -1080,35 +1135,27 @@
         return;
       }
 
-      annoListEl.innerHTML = annotations
-        .map(a => {
-          const safe = escapeHtml(a.text);
-          const thumb = a.imageDataUrl
-            ? `<img src="${a.imageDataUrl}" alt="anno" style="margin-top:8px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);max-width:260px;width:100%;display:block;">`
-            : `<div style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.6);">No screenshot</div>`;
-          return `
-            <div class="bg-gray-950 border border-gray-700 rounded-lg p-3">
-              <div class="flex items-start justify-between gap-3">
-                <div class="flex-1">
-                  <div class="text-xs text-gray-400 font-mono">${formatTime(a.timeSec)}</div>
-                  <div class="text-sm text-white font-semibold mt-1">${safe}</div>
-                </div>
-                <div class="flex gap-2">
-                  <button data-jump="${a.id}"
-                    class="px-3 py-1.5 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold">
-                    Jump
-                  </button>
-                  <button data-del="${a.id}"
-                    class="px-3 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white font-semibold">
-                    Delete
-                  </button>
-                </div>
+      annoListEl.innerHTML = annotations.map(a => {
+        const safe = escapeHtml(a.text);
+        const thumb = a.imageDataUrl
+          ? `<img src="${a.imageDataUrl}" alt="anno" style="margin-top:8px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);max-width:260px;width:100%;display:block;">`
+          : `<div style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.6);">No screenshot</div>`;
+        return `
+          <div class="bg-gray-950 border border-gray-700 rounded-lg p-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="flex-1">
+                <div class="text-xs text-gray-400 font-mono">${formatTime(a.timeSec)}</div>
+                <div class="text-sm text-white font-semibold mt-1">${safe}</div>
               </div>
-              ${thumb}
+              <div class="flex gap-2">
+                <button data-jump="${a.id}" class="px-3 py-1.5 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold">Jump</button>
+                <button data-del="${a.id}" class="px-3 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white font-semibold">Delete</button>
+              </div>
             </div>
-          `;
-        })
-        .join("");
+            ${thumb}
+          </div>
+        `;
+      }).join("");
 
       annoListEl.querySelectorAll("[data-jump]").forEach(btn => {
         btn.addEventListener("click", () => {
@@ -1200,28 +1247,27 @@
       ctx.restore();
     }
 
-    function drawCurrentDraftStrokes() {
-      if (!annotateMode) return;
-      drawAnnotationStrokes({ strokes: currentStrokes });
-    }
+    // ---------------------------
+    // DRAWING EVENTS + STOP BUBBLE
+    // ---------------------------
+    // ✅ prevent canvas interactions from toggling play/pause via container click
+    canvas.addEventListener("click", (e) => { if (annotateMode) e.stopPropagation(); });
 
-    // Drawing events (pointer)
     canvas.addEventListener("pointerdown", (e) => {
+      if (annotateMode) e.stopPropagation();
       if (!annotateMode) return;
       isDrawing = true;
       try { canvas.setPointerCapture(e.pointerId); } catch {}
       currentStroke = [];
-      const p = getCanvasNormalizedPoint(e);
-      currentStroke.push(p);
+      currentStroke.push(getCanvasNormalizedPoint(e));
       currentStrokes.push(currentStroke);
       e.preventDefault();
       renderFrame();
-    });
+    }, true);
 
     canvas.addEventListener("pointermove", (e) => {
       if (!annotateMode || !isDrawing || !currentStroke) return;
-      const p = getCanvasNormalizedPoint(e);
-      currentStroke.push(p);
+      currentStroke.push(getCanvasNormalizedPoint(e));
       e.preventDefault();
       renderFrame();
     });
@@ -1236,34 +1282,29 @@
     }
     canvas.addEventListener("pointerup", endStroke);
     canvas.addEventListener("pointercancel", endStroke);
-    canvas.addEventListener("pointerleave", (e) => {
-      if (annotateMode && isDrawing) endStroke(e);
-    });
+    canvas.addEventListener("pointerleave", (e) => { if (annotateMode && isDrawing) endStroke(e); });
 
     // Touch fallback (iOS)
-    function touchToPointerLike(touch) {
-      return { clientX: touch.clientX, clientY: touch.clientY };
-    }
+    function touchToPointerLike(touch) { return { clientX: touch.clientX, clientY: touch.clientY }; }
 
     canvas.addEventListener("touchstart", (e) => {
+      if (annotateMode) e.stopPropagation();
       if (!annotateMode) return;
       e.preventDefault();
       const t = e.touches[0];
       if (!t) return;
-      const p = getCanvasNormalizedPoint(touchToPointerLike(t));
       isDrawing = true;
-      currentStroke = [p];
+      currentStroke = [ getCanvasNormalizedPoint(touchToPointerLike(t)) ];
       currentStrokes.push(currentStroke);
       renderFrame();
-    }, { passive: false });
+    }, { capture: true, passive: false });
 
     canvas.addEventListener("touchmove", (e) => {
       if (!annotateMode || !isDrawing || !currentStroke) return;
       e.preventDefault();
       const t = e.touches[0];
       if (!t) return;
-      const p = getCanvasNormalizedPoint(touchToPointerLike(t));
-      currentStroke.push(p);
+      currentStroke.push(getCanvasNormalizedPoint(touchToPointerLike(t)));
       renderFrame();
     }, { passive: false });
 
@@ -1276,7 +1317,7 @@
     }, { passive: false });
 
     // ---------------------------
-    // SCORING + AUTO NOTES
+    // SCORING + REPORT
     // ---------------------------
     function buildAutoNotes(report) {
       const notes = [];
@@ -1316,18 +1357,9 @@
       else if (overall >= 50) verdict = "Needs coaching focus";
       else verdict = "High correction needed";
 
-      return {
-        goodRepPct: round1(goodRepPct),
-        stabilityScore: round1(stabilityScore),
-        depthScore: round1(depthScore),
-        overallScore: round1(overall),
-        verdict
-      };
+      return { goodRepPct: round1(goodRepPct), stabilityScore: round1(stabilityScore), depthScore: round1(depthScore), overallScore: round1(overall), verdict };
     }
 
-    // ---------------------------
-    // REPORT BUILD + UI
-    // ---------------------------
     function buildSessionReport() {
       const type = exerciseSelect.value;
 
@@ -1353,10 +1385,7 @@
         sessionStartTimeISO,
         exerciseType: type,
         totals: { totalReps, goodReps, badReps },
-        angles: {
-          avgMinAngle: Number(avgMinAngle.toFixed(2)),
-          stdMinAngle: Number(stdMinAngle.toFixed(2))
-        },
+        angles: { avgMinAngle: Number(avgMinAngle.toFixed(2)), stdMinAngle: Number(stdMinAngle.toFixed(2)) },
         scores,
         repHistory: historyData.map(r => ({
           repNum: r.repNum,
@@ -1366,13 +1395,7 @@
         })),
         topFaults,
         notesAuto: buildAutoNotes({ exerciseType: type, topFaults, scores }),
-        annotations: annotations.map(a => ({
-          id: a.id,
-          timeSec: a.timeSec,
-          text: a.text,
-          strokes: a.strokes,
-          imageDataUrl: a.imageDataUrl || null
-        }))
+        annotations: annotations.map(a => ({ id: a.id, timeSec: a.timeSec, text: a.text, strokes: a.strokes, imageDataUrl: a.imageDataUrl || null }))
       };
     }
 
@@ -1395,8 +1418,7 @@
       if (!report.topFaults || report.topFaults.length === 0) {
         reportFaults.innerText = "No major issues detected.";
       } else {
-        reportFaults.innerHTML = report.topFaults
-          .slice(0, 6)
+        reportFaults.innerHTML = report.topFaults.slice(0, 6)
           .map(x => `• ${escapeHtml(String(x.fault))} <span style="color:#6b7280;">(${x.count})</span>`)
           .join("<br/>");
       }
@@ -1407,41 +1429,34 @@
         reportNotesAuto.innerHTML = report.notesAuto.map(n => `• ${escapeHtml(String(n))}`).join("<br/>");
       }
 
-      // show screenshots in report (limit for safety in PDF)
       if (!report.annotations || report.annotations.length === 0) {
         reportAnnotations.innerText = "No annotations.";
       } else {
-        const maxShow = 20; // UI can show more; keep reasonable
-        reportAnnotations.innerHTML = report.annotations
-          .slice(0, maxShow)
-          .map(a => {
-            const img = a.imageDataUrl
-              ? `<img class="report-anno-img" src="${a.imageDataUrl}" alt="Annotated frame"/>`
-              : `<div style="margin-top:8px;font-size:12px;color:#6b7280;">No screenshot saved for this annotation.</div>`;
-            return `
-              <div class="report-anno-card">
-                <div class="report-anno-meta">${escapeHtml(formatTime(a.timeSec))}</div>
-                <div class="report-anno-text">${escapeHtml(a.text)}</div>
-                ${img}
-              </div>
-            `;
-          })
-          .join("");
+        reportAnnotations.innerHTML = report.annotations.slice(0, 20).map(a => {
+          const img = a.imageDataUrl
+            ? `<img class="report-anno-img" src="${a.imageDataUrl}" alt="Annotated frame"/>`
+            : `<div style="margin-top:8px;font-size:12px;color:#6b7280;">No screenshot saved for this annotation.</div>`;
+          return `
+            <div class="report-anno-card">
+              <div class="report-anno-meta">${escapeHtml(formatTime(a.timeSec))}</div>
+              <div class="report-anno-text">${escapeHtml(a.text)}</div>
+              ${img}
+            </div>
+          `;
+        }).join("");
       }
 
       if (!report.repHistory || report.repHistory.length === 0) {
         reportTable.innerHTML = `<tr><td class="p-2" colspan="4">No reps yet</td></tr>`;
       } else {
-        reportTable.innerHTML = report.repHistory
-          .map(r => `
-            <tr style="border-top:1px solid #e5e7eb;">
-              <td class="p-2">${r.repNum}</td>
-              <td class="p-2">${escapeHtml(String(r.status))}</td>
-              <td class="p-2">${Math.round(r.minAngle)}°</td>
-              <td class="p-2">${formatTime(r.timestampSec || 0)}</td>
-            </tr>
-          `)
-          .join("");
+        reportTable.innerHTML = report.repHistory.map(r => `
+          <tr style="border-top:1px solid #e5e7eb;">
+            <td class="p-2">${r.repNum}</td>
+            <td class="p-2">${escapeHtml(String(r.status))}</td>
+            <td class="p-2">${Math.round(r.minAngle)}°</td>
+            <td class="p-2">${formatTime(r.timestampSec || 0)}</td>
+          </tr>
+        `).join("");
       }
     }
 
@@ -1467,26 +1482,17 @@
       await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 120)));
 
       const { jsPDF } = window.jspdf || {};
-      if (!jsPDF) {
-        alert("jsPDF failed to load. Check your CDN/internet.");
-        return;
-      }
+      if (!jsPDF) { alert("jsPDF failed to load."); return; }
 
       const mobile = isMobileUA();
       const scale = mobile ? 1.2 : 2;
 
-      const canvasShot = await html2canvas(reportArea, {
-        scale,
-        backgroundColor: "#ffffff",
-        useCORS: true
-      });
-
+      const canvasShot = await html2canvas(reportArea, { scale, backgroundColor: "#ffffff", useCORS: true });
       const imgData = canvasShot.toDataURL("image/jpeg", mobile ? 0.82 : 0.95);
 
       const pdf = new jsPDF("p", "pt", "a4");
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-
       const margin = 24;
       const usableWidth = pageWidth - margin * 2;
 
@@ -1511,11 +1517,7 @@
           sliceCanvas.height = Math.min(pageUsableHeightPx, canvasShot.height - offsetYpx);
 
           sliceCtx.clearRect(0, 0, sliceCanvas.width, sliceCanvas.height);
-          sliceCtx.drawImage(
-            canvasShot,
-            0, offsetYpx, sliceCanvas.width, sliceCanvas.height,
-            0, 0, sliceCanvas.width, sliceCanvas.height
-          );
+          sliceCtx.drawImage(canvasShot, 0, offsetYpx, sliceCanvas.width, sliceCanvas.height, 0, 0, sliceCanvas.width, sliceCanvas.height);
 
           const sliceImg = sliceCanvas.toDataURL("image/jpeg", mobile ? 0.82 : 0.95);
           const sliceHeightPt = (sliceCanvas.height / pxPerPt);
@@ -1535,7 +1537,6 @@
     // RENDERING / POSE PROCESSING
     // ---------------------------
     function renderFrame() {
-      // canvas is drawn in CSS pixels (ctx transform applied in fitCanvasToContainer)
       const { w, h } = getCanvasCssSize();
       ctx.clearRect(0, 0, w, h);
 
@@ -1547,7 +1548,7 @@
         showAnnotationOverlay(activeAnn);
       } else {
         if (annotateMode) {
-          drawCurrentDraftStrokes();
+          drawAnnotationStrokes({ strokes: currentStrokes });
           const near = findActiveAnnotation(t);
           if (near) {
             drawAnnotationStrokes(near);
@@ -1561,7 +1562,6 @@
       }
 
       if (annotateMode) return;
-
       if (!lastResults || !lastResults.poseLandmarks) return;
 
       const landmarks = lastResults.poseLandmarks;
@@ -1661,24 +1661,14 @@
       document.getElementById('feedback').innerText = feedbackText;
 
       if (feedbackText !== lastFeedbackText) {
-        if (
-          feedbackText &&
-          feedbackText !== "IDLE" &&
-          feedbackText !== "Start" &&
-          feedbackText !== "Working..." &&
-          feedbackText !== "Not detected" &&
-          feedbackText !== "Push"
-        ) {
+        if (feedbackText && !["IDLE","Start","Working...","Not detected","Push"].includes(feedbackText)) {
           formFaultCounts[feedbackText] = (formFaultCounts[feedbackText] || 0) + 1;
         }
         lastFeedbackText = feedbackText;
       }
     }
 
-    function onResults(results) {
-      lastResults = results;
-      renderFrame();
-    }
+    function onResults(results) { lastResults = results; renderFrame(); }
 
     async function processLoop() {
       if (!pose) return;
@@ -1687,13 +1677,9 @@
       if (playbackVideo.paused) return;
       if (annotateMode) return;
 
-      try {
-        await pose.send({ image: playbackVideo });
-      } catch (e) {
-        console.error("pose.send failed:", e);
-        processingActive = false;
-        return;
-      }
+      try { await pose.send({ image: playbackVideo }); }
+      catch (e) { console.error("pose.send failed:", e); processingActive = false; return; }
+
       requestAnimationFrame(processLoop);
     }
 
@@ -1763,7 +1749,6 @@
       });
 
       btnSpeed.textContent = `${SPEEDS[speedIndex].toFixed(1)}×`;
-
       updateTimeUI();
       updatePlayPauseUI();
     }
@@ -1772,18 +1757,22 @@
       const minimized = controlsOverlay.classList.toggle("minimized");
 
       if (minimized) {
+        // ✅ tiny pill mode (phone-friendly)
         controlsOverlay.innerHTML = `
           <div class="row">
-            <button id="btnRestoreControls" class="primary">Show Controls</button>
-            <div class="meta ml-2">Controls hidden • Tap video to play/pause</div>
+            <button id="btnRestoreControls" class="primary">Show</button>
+            <div class="meta ml-2">Controls</div>
           </div>
         `;
-        document.getElementById("btnRestoreControls").addEventListener("click", () => {
+        document.getElementById("btnRestoreControls").addEventListener("click", (e) => {
+          e.stopPropagation();
           controlsOverlay.classList.remove("minimized");
           rebuildControlsUI();
+          applyResponsiveControlsPolicy();
         });
       } else {
         rebuildControlsUI();
+        applyResponsiveControlsPolicy();
       }
     }
 
@@ -1826,28 +1815,23 @@
       if (btnSpeed) btnSpeed.textContent = `${SPEEDS[speedIndex].toFixed(2).replace(/\.00$/, ".0")}×`;
     }
 
-    // tap on video area to play/pause (mobile-friendly)
-document.getElementById("videoContainer").addEventListener("click", (e) => {
-  // ✅ do NOT toggle play/pause while annotating/drawing
-  if (annotateMode) return;
+    // ✅ Tap/click on video area toggles play (but NEVER during annotate and never when clicking overlays)
+    videoContainer.addEventListener("click", (e) => {
+      if (annotateMode) return;
 
-  // Don't trigger if clicking UI controls
-  const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
-  if (tag === "button" || tag === "input" || tag === "select" || tag === "textarea") return;
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+      if (tag === "button" || tag === "input" || tag === "select" || tag === "textarea") return;
 
-  // If click came from overlays (controls/annotation panel), ignore
-  if (e.target.closest && (e.target.closest("#controlsOverlay") || e.target.closest("#annotationOverlay"))) return;
+      if (e.target.closest && (e.target.closest("#controlsOverlay") || e.target.closest("#annotationOverlay"))) return;
 
-  if (!playbackVideo.src) return;
-  togglePlayPause();
-});
-
+      if (!playbackVideo.src) return;
+      togglePlayPause();
+    });
 
     // ---------------------------
-    // MODE SWITCH
+    // MODE SWITCH + BLOB CLEANUP
     // ---------------------------
     function clearPlaybackSrc() {
-      // release blob url to prevent memory leak (important on phones)
       if (activeBlobUrl) {
         try { URL.revokeObjectURL(activeBlobUrl); } catch {}
         activeBlobUrl = null;
@@ -1896,6 +1880,8 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
         btnRecord.classList.add('hidden');
         cameraStatus.innerText = "Ready";
       }
+
+      applyResponsiveControlsPolicy();
     }
 
     // ---------------------------
@@ -1936,8 +1922,8 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
         }
 
         const selectedId = cameraSelect.value;
-
         let stream = null;
+
         const tryConstraints = async (useExact) => {
           const constraints = {
             video: {
@@ -1999,9 +1985,7 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
         try { mediaRecorder = new MediaRecorder(cameraStream); }
         catch (e) { alert("Browser not supported for recording."); return; }
 
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data && event.data.size > 0) recordedChunks.push(event.data);
-        };
+        mediaRecorder.ondataavailable = (event) => { if (event.data && event.data.size > 0) recordedChunks.push(event.data); };
         mediaRecorder.onstop = () => completeRecording();
 
         mediaRecorder.start();
@@ -2049,7 +2033,6 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
       startPrompt.classList.add('hidden');
 
       playbackVideo.onloadedmetadata = async () => {
-        // Fit canvas to displayed size (mobile-safe)
         fitCanvasToContainer();
         lastPlaybackTime = 0;
 
@@ -2059,6 +2042,7 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
 
         try { await playbackVideo.play(); } catch (e) {}
         await startProcessing();
+        applyResponsiveControlsPolicy();
       };
 
       playbackVideo.onended = () => {
@@ -2068,9 +2052,6 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
       };
     }
 
-    // ---------------------------
-    // REPLAY (KEEP annotations!)
-    // ---------------------------
     async function replayVideo() {
       resetAnalysisOnly();
       playbackVideo.currentTime = 0;
@@ -2109,7 +2090,6 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
       pose.onResults(onResults);
 
       try { if (pose.initialize) await pose.initialize(); } catch {}
-
       loader.classList.add('hidden');
 
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -2139,14 +2119,12 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
       updateTimeUI();
       updatePlayPauseUI();
       renderFrame();
+      applyResponsiveControlsPolicy();
     });
 
     btnDownloadPDF.addEventListener("click", async () => {
       try { await downloadPdfReport(); }
-      catch (e) {
-        console.error("PDF export failed:", e);
-        alert("PDF export failed. Check console: " + (e?.message || e));
-      }
+      catch (e) { console.error("PDF export failed:", e); alert("PDF export failed: " + (e?.message || e)); }
     });
 
     upload.addEventListener('change', async (e) => {
@@ -2171,12 +2149,13 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
         updateTimeUI();
         updatePlayPauseUI();
         renderFrame();
+        applyResponsiveControlsPolicy();
 
         try {
-          // On mobile, play must come from gesture; if blocked, user can press Play button
           await playbackVideo.play();
           await startProcessing();
           updatePlayPauseUI();
+          applyResponsiveControlsPolicy();
         } catch (err) {
           console.error("Video play blocked:", err);
           safePauseVideo();
@@ -2202,10 +2181,9 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
     btnSaveAnnotation.addEventListener("click", () => saveAnnotation());
     btnExitAnnotate.addEventListener("click", () => exitAnnotateMode(false));
 
-    // prevent phantom reps on backwards seeks
+    // backwards seek guard
     playbackVideo.addEventListener("timeupdate", () => {
       const t = playbackVideo.currentTime || 0;
-
       if (t + SEEK_RESET_EPS < lastPlaybackTime) {
         stage = "up";
         currentRepMinAngle = 360;
@@ -2236,12 +2214,14 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
       processingActive = true;
       updatePlayPauseUI();
       requestAnimationFrame(processLoop);
+      applyResponsiveControlsPolicy();
     });
 
     playbackVideo.addEventListener("pause", () => {
       processingActive = false;
       updatePlayPauseUI();
       renderFrame();
+      applyResponsiveControlsPolicy();
     });
 
     // Keyboard shortcuts (desktop)
@@ -2256,16 +2236,11 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
         e.preventDefault();
         enterAnnotateMode();
       } else if (e.key === "Escape") {
-        if (annotateMode) {
-          e.preventDefault();
-          exitAnnotateMode(false);
-        }
+        if (annotateMode) { e.preventDefault(); exitAnnotateMode(false); }
       } else if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        stepBy(-0.25);
+        e.preventDefault(); stepBy(-0.25);
       } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        stepBy(+0.25);
+        e.preventDefault(); stepBy(+0.25);
       }
     });
 
@@ -2273,11 +2248,13 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
     window.addEventListener("resize", () => {
       fitCanvasToContainer();
       renderFrame();
+      applyResponsiveControlsPolicy();
     });
     window.addEventListener("orientationchange", () => {
       setTimeout(() => {
         fitCanvasToContainer();
         renderFrame();
+        applyResponsiveControlsPolicy();
       }, 250);
     });
 
@@ -2298,8 +2275,8 @@ document.getElementById("videoContainer").addEventListener("click", (e) => {
       updatePlayPauseUI();
       if (btnSpeed) btnSpeed.textContent = `${SPEEDS[speedIndex].toFixed(1)}×`;
 
-      // If video not loaded yet, fitCanvas will no-op; after load metadata it fits
       fitCanvasToContainer();
+      applyResponsiveControlsPolicy();
     });
   </script>
 </body>
