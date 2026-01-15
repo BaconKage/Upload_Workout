@@ -2,53 +2,150 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>AI Workout Validator - Universal</title>
 
-  <!-- Tailwind CDN (fine for testing) -->
+  <!-- Tailwind (fine for testing) -->
   <script src="https://cdn.tailwindcss.com"></script>
 
   <!-- MediaPipe Pose -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
+  <!-- PDF deps -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
   <style>
-    /* UTILS */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #1f2937; }
     ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
     .hidden { display: none !important; }
 
-    /* VIDEO CONTAINER */
     .canvas-wrapper {
       position: relative;
       width: 100%;
-      max-width: 800px;
+      max-width: 900px;
       background: #000;
       border-radius: 12px;
       overflow: hidden;
       margin: 0 auto;
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
       aspect-ratio: 16/9;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
     }
 
-    /* LAYERS */
     .layer { position: absolute; inset: 0; width: 100%; height: 100%; }
 
-    /* LAYER 1: RECORDING (Webcam) */
     #recordingLayer { z-index: 20; background: #000; }
     #livePreview {
       width: 100%; height: 100%;
       object-fit: cover;
-      transform: scaleX(-1); /* Mirror */
+      transform: scaleX(-1);
     }
 
-    /* LAYER 2: ANALYSIS (Playback) */
     #analysisLayer { z-index: 10; background: #000; }
-    #playbackVideo { width: 100%; height: 100%; object-fit: contain; }
-    #outputCanvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
 
-    /* ANIMATIONS */
+    /* ✅ uploaded playback visible */
+    #playbackVideo{
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      opacity: 1;
+      pointer-events: none;
+    }
+
+    #outputCanvas {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: contain;
+      cursor: default;
+      z-index: 30;
+      touch-action: none;
+    }
+
+    /* Custom Controls overlay (always recoverable) */
+    #controlsOverlay {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 80;
+      background: rgba(0,0,0,0.62);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      backdrop-filter: blur(10px);
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    #controlsOverlay.minimized {
+      padding: 6px 10px;
+      left: auto;
+      right: 12px;
+      width: auto;
+      bottom: 12px;
+      opacity: 0.95;
+    }
+    #controlsOverlay .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    #controlsOverlay button {
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-weight: 700;
+      font-size: 12px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: #fff;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #controlsOverlay button:hover { background: rgba(255,255,255,0.14); }
+    #controlsOverlay button.primary { background: rgba(37,99,235,0.85); border-color: rgba(37,99,235,0.9); }
+    #controlsOverlay button.primary:hover { background: rgba(37,99,235,1); }
+    #controlsOverlay button.danger { background: rgba(220,38,38,0.9); border-color: rgba(220,38,38,0.9); }
+    #controlsOverlay button.danger:hover { background: rgba(220,38,38,1); }
+    #controlsOverlay .meta {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      color: rgba(255,255,255,0.75);
+      white-space: nowrap;
+    }
+    #scrubber {
+      width: 100%;
+      accent-color: #60a5fa;
+    }
+
+    /* Floating annotation overlay */
+    #annotationOverlay {
+      position: absolute;
+      left: 16px;
+      bottom: 90px;
+      z-index: 90;
+      max-width: 85%;
+      background: rgba(0,0,0,0.72);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 10px 12px;
+      backdrop-filter: blur(8px);
+      display: none;
+    }
+    #annotationOverlay .title {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.75);
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    #annotationOverlay .body {
+      font-size: 13px;
+      color: #fff;
+      font-weight: 600;
+      line-height: 1.25;
+      word-wrap: break-word;
+    }
+
     .recording-pulse { animation: pulse-red 2s infinite; }
     @keyframes pulse-red {
       0% { box-shadow: inset 0 0 0 0px rgba(239, 68, 68, 0.5); }
@@ -59,12 +156,52 @@
     .history-item { transition: all 0.2s ease; border-left-width: 4px; }
     .history-good { border-left-color: #22c55e; background-color: rgba(34, 197, 94, 0.1); }
     .history-bad  { border-left-color: #eab308; background-color: rgba(234, 179, 8, 0.1); }
+
+    #reportArea { overflow: visible; }
+
+    /* Small helper badge */
+    #annoModeBadge {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 95;
+      display: none;
+      background: rgba(168, 85, 247, 0.85);
+      border: 1px solid rgba(168, 85, 247, 1);
+      color: white;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-weight: 800;
+      font-size: 12px;
+      letter-spacing: .02em;
+      box-shadow: 0 10px 25px rgba(0,0,0,.35);
+    }
+
+    /* Report annotation cards */
+    .report-anno-card{
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px;
+      background: #fff;
+      margin-bottom: 10px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .report-anno-meta{ font-size: 12px; color: #374151; font-weight: 700; }
+    .report-anno-text{ font-size: 13px; color: #111827; margin-top: 4px; }
+    .report-anno-img{
+      margin-top: 8px;
+      width: 100%;
+      max-width: 520px;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      display: block;
+    }
   </style>
 </head>
 
 <body class="bg-gray-900 text-white min-h-screen font-sans p-6">
-
-  <div class="max-w-4xl mx-auto space-y-6">
+  <div class="max-w-5xl mx-auto space-y-6">
 
     <div class="flex justify-between items-center border-b border-gray-700 pb-4">
       <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-green-400">
@@ -105,9 +242,9 @@
           <span id="cameraStatus" class="text-xs text-gray-400">Ready</span>
         </div>
 
-        <div class="flex gap-3">
+        <div class="flex gap-3 flex-wrap">
           <select id="cameraSelect"
-                  class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-grow">
+                  class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-grow min-w-[180px]">
             <option value="">Default Camera</option>
           </select>
 
@@ -126,8 +263,19 @@
 
     <div class="canvas-wrapper border border-gray-800 relative bg-black" id="videoContainer">
       <div id="analysisLayer" class="layer">
-        <video id="playbackVideo" playsinline muted class="w-full h-full"></video>
-        <canvas id="outputCanvas" class="w-full h-full"></canvas>
+        <video id="playbackVideo" playsinline muted></video>
+        <canvas id="outputCanvas"></canvas>
+
+        <div id="annoModeBadge">ANNOTATE MODE • Draw on frame • ESC to exit</div>
+
+        <!-- Floating overlay text -->
+        <div id="annotationOverlay">
+          <div class="title" id="annotationOverlayTitle">Annotation</div>
+          <div class="body" id="annotationOverlayBody">—</div>
+        </div>
+
+        <!-- Custom Controls -->
+        <div id="controlsOverlay"></div>
       </div>
 
       <div id="recordingLayer" class="layer hidden flex items-center justify-center">
@@ -159,10 +307,6 @@
       <div id="replayOverlay" class="absolute inset-0 bg-black/70 flex items-center justify-center z-50 hidden backdrop-blur-sm">
         <button id="btnReplay"
                 class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full flex items-center gap-2 transition transform hover:scale-105 shadow-xl">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-          </svg>
           Replay Analysis
         </button>
       </div>
@@ -195,6 +339,186 @@
       </div>
     </div>
 
+    <!-- Trainer Annotations panel -->
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 shadow-sm space-y-3">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div class="text-sm font-bold text-gray-200 uppercase tracking-wider">Trainer Annotations (Draw + Text)</div>
+          <div class="text-xs text-gray-400 mt-1">Pause → Annotate Frame → Draw → Save. (Shortcut: <b>A</b> to annotate, <b>ESC</b> to exit)</div>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <button id="btnAnnotate"
+            class="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+            Annotate Frame
+          </button>
+          <button id="btnClearDrawing"
+            class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+            Clear Drawing
+          </button>
+          <button id="btnSaveAnnotation"
+            class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+            Save Annotation (adds screenshot to report)
+          </button>
+          <button id="btnExitAnnotate"
+            class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+            Exit
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="bg-gray-900 border border-gray-700 rounded-lg p-3">
+          <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Timestamp</div>
+          <div id="annoTime" class="text-lg font-bold text-white mt-1">--</div>
+          <div class="text-xs text-gray-400 mt-1">Auto from current video time</div>
+        </div>
+
+        <div class="md:col-span-2 bg-gray-900 border border-gray-700 rounded-lg p-3">
+          <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Annotation Text</div>
+          <textarea id="annoText" rows="2"
+            class="mt-2 w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-white outline-none focus:ring-2 focus:ring-purple-500"
+            placeholder="Example: Rep 4 — knee collapses inward, cue knees out."></textarea>
+          <div class="text-[11px] text-gray-400 mt-1">
+            Tip: keep it short. This will appear on the video at this timestamp.
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-gray-900 border border-gray-700 rounded-lg p-3">
+        <div class="flex items-center justify-between">
+          <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Saved Annotations</div>
+          <div class="text-[11px] text-gray-400">Click Jump to go there</div>
+        </div>
+        <div id="annoList" class="mt-2 space-y-2">
+          <div class="text-sm text-gray-500 italic">No annotations yet.</div>
+        </div>
+      </div>
+
+      <div class="text-[11px] text-gray-400">
+        Privacy + cost: we store only <b>timestamp + drawing strokes + note text + a screenshot of the annotated frame</b>, not the full video.
+      </div>
+    </div>
+
+    <!-- JSON report + reset -->
+    <div class="flex justify-end mt-2 gap-2">
+      <button id="btnDownloadReport"
+        class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+        Download Report (JSON)
+      </button>
+      <button id="btnResetSession"
+        class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+        Reset Session (clears reps + annotations)
+      </button>
+    </div>
+
+    <!-- Trainer-friendly PDF report -->
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 shadow-sm">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-gray-200 uppercase tracking-wider">Trainer Report</h3>
+        <button id="btnDownloadPDF"
+          class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+          Download PDF
+        </button>
+      </div>
+
+      <div id="reportArea" class="mt-4 bg-white text-gray-900 border border-gray-300 rounded-lg p-4">
+        <div class="flex justify-between items-start gap-4">
+          <div>
+            <div class="text-lg font-bold text-gray-900">AI Workout Report</div>
+            <div id="reportMeta" class="text-xs text-gray-600 mt-1">No session yet</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-gray-600">Exercise</div>
+            <div id="reportExercise" class="text-sm font-semibold text-gray-900">--</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3 mt-4">
+          <div class="bg-gray-100 border border-gray-200 rounded p-3 text-center">
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Overall Score</div>
+            <div id="reportOverallScore" class="text-2xl font-bold text-gray-900">--</div>
+            <div id="reportVerdict" class="text-[11px] mt-1 text-gray-600">--</div>
+          </div>
+          <div class="bg-gray-100 border border-gray-200 rounded p-3 text-center">
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Stability Score</div>
+            <div id="reportStabilityScore" class="text-2xl font-bold text-gray-900">--</div>
+            <div class="text-[11px] mt-1 text-gray-600">Consistency of reps</div>
+          </div>
+          <div class="bg-gray-100 border border-gray-200 rounded p-3 text-center">
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Good Rep %</div>
+            <div id="reportGoodPct" class="text-2xl font-bold text-gray-900">--</div>
+            <div class="text-[11px] mt-1 text-gray-600">Quality ratio</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3 mt-3">
+          <div class="bg-gray-50 border border-gray-200 rounded p-3 text-center">
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Total Reps</div>
+            <div id="reportTotalReps" class="text-2xl font-bold text-gray-900">0</div>
+          </div>
+          <div class="bg-gray-50 border border-gray-200 rounded p-3 text-center">
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Good Reps</div>
+            <div id="reportGoodReps" class="text-2xl font-bold text-gray-900">0</div>
+          </div>
+          <div class="bg-gray-50 border border-gray-200 rounded p-3 text-center">
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Bad Reps</div>
+            <div id="reportBadReps" class="text-2xl font-bold text-gray-900">0</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <div class="bg-gray-50 border border-gray-200 rounded p-3">
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Average Min Angle</div>
+            <div id="reportAvgMinAngle" class="text-xl font-bold text-gray-900">--</div>
+            <div class="text-[11px] text-gray-600">Lower usually means deeper (depends on exercise)</div>
+          </div>
+          <div class="bg-gray-50 border border-gray-200 rounded p-3">
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Rep-to-Rep Variation</div>
+            <div id="reportStdMinAngle" class="text-xl font-bold text-gray-900">--</div>
+            <div class="text-[11px] text-gray-600">Lower variation = more stable</div>
+          </div>
+        </div>
+
+        <div class="mt-4">
+          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Top Issues Detected</div>
+          <div id="reportFaults" class="text-sm text-gray-800">No data</div>
+        </div>
+
+        <div class="mt-4">
+          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Notes (Auto)</div>
+          <div id="reportNotesAuto" class="text-sm text-gray-800">No notes yet.</div>
+        </div>
+
+        <div class="mt-4">
+          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Trainer Annotations (with screenshots)</div>
+          <div id="reportAnnotations" class="text-sm text-gray-800">No annotations.</div>
+        </div>
+
+        <div class="mt-4">
+          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Rep Summary</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm border border-gray-200 rounded overflow-hidden">
+              <thead class="bg-gray-100 text-gray-700">
+                <tr>
+                  <th class="text-left p-2 border-b border-gray-200">Rep</th>
+                  <th class="text-left p-2 border-b border-gray-200">Status</th>
+                  <th class="text-left p-2 border-b border-gray-200">Min Angle</th>
+                  <th class="text-left p-2 border-b border-gray-200">Time</th>
+                </tr>
+              </thead>
+              <tbody id="reportTable" class="bg-white text-gray-800">
+                <tr><td class="p-2" colspan="4">No reps yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="mt-4 text-[11px] text-gray-600">
+          Note: This report stores only metrics + trainer annotations (timestamps + drawings + text + screenshots). No full video is stored.
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <script>
@@ -204,7 +528,8 @@
     const playbackVideo = document.getElementById('playbackVideo');
     const livePreview   = document.getElementById('livePreview');
     const canvas        = document.getElementById('outputCanvas');
-    const ctx           = canvas.getContext('2d');
+    const ctx           = canvas.getContext('2d', { alpha: true });
+
     const upload        = document.getElementById('videoUpload');
     const loader        = document.getElementById('loader');
     const startPrompt   = document.getElementById('startPrompt');
@@ -212,7 +537,6 @@
     const exerciseSelect= document.getElementById('exerciseType');
     const historyList   = document.getElementById('historyList');
 
-    // UI
     const recordingLayer     = document.getElementById('recordingLayer');
     const analysisLayer      = document.getElementById('analysisLayer');
     const btnRecord          = document.getElementById('btnRecord');
@@ -224,21 +548,97 @@
     const btnModeCamera      = document.getElementById('btnModeCamera');
     const btnReplay          = document.getElementById('btnReplay');
 
+    const btnDownloadReport  = document.getElementById('btnDownloadReport');
+    const btnResetSession    = document.getElementById('btnResetSession');
+
+    const btnDownloadPDF = document.getElementById("btnDownloadPDF");
+    const reportArea = document.getElementById("reportArea");
+    const reportMeta = document.getElementById("reportMeta");
+    const reportExercise = document.getElementById("reportExercise");
+    const reportTotalReps = document.getElementById("reportTotalReps");
+    const reportGoodReps = document.getElementById("reportGoodReps");
+    const reportBadReps = document.getElementById("reportBadReps");
+    const reportFaults = document.getElementById("reportFaults");
+    const reportTable = document.getElementById("reportTable");
+
+    const reportOverallScore = document.getElementById("reportOverallScore");
+    const reportStabilityScore = document.getElementById("reportStabilityScore");
+    const reportGoodPct = document.getElementById("reportGoodPct");
+    const reportVerdict = document.getElementById("reportVerdict");
+    const reportAvgMinAngle = document.getElementById("reportAvgMinAngle");
+    const reportStdMinAngle = document.getElementById("reportStdMinAngle");
+    const reportNotesAuto = document.getElementById("reportNotesAuto");
+    const reportAnnotations = document.getElementById("reportAnnotations");
+
+    // Annotation UI
+    const btnAnnotate = document.getElementById("btnAnnotate");
+    const btnClearDrawing = document.getElementById("btnClearDrawing");
+    const btnSaveAnnotation = document.getElementById("btnSaveAnnotation");
+    const btnExitAnnotate = document.getElementById("btnExitAnnotate");
+    const annoTimeEl = document.getElementById("annoTime");
+    const annoTextEl = document.getElementById("annoText");
+    const annoListEl = document.getElementById("annoList");
+
+    const annotationOverlay = document.getElementById("annotationOverlay");
+    const annotationOverlayBody = document.getElementById("annotationOverlayBody");
+    const annoModeBadge = document.getElementById("annoModeBadge");
+
+    // Controls overlay container
+    const controlsOverlay = document.getElementById("controlsOverlay");
+
+    // Controls refs (rebuilt dynamically)
+    let btnPlayPause = null;
+    let btnStepBack = null;
+    let btnStepFwd = null;
+    let timeLabel = null;
+    let scrubber = null;
+    let btnSpeed = null;
+    let btnToggleControls = null;
+
     // ---------------------------
     // STATE
     // ---------------------------
     let pose = null;
+
     let count = 0;
     let stage = "up";
     let currentRepMinAngle = 360;
     let repStartTime = 0;
     let historyData = [];
 
-    // Recorder
     let mediaRecorder = null;
     let recordedChunks = [];
     let isRecording = false;
     let cameraStream = null;
+
+    let sessionId = null;
+    let sessionStartTimeISO = null;
+    let formFaultCounts = {};
+
+    // annotations
+    let annotations = [];
+    let annotateMode = false;
+    let currentAnnoTime = null;
+    let currentStrokes = [];
+    let currentStroke = null;
+    let isDrawing = false;
+
+    const ANNO_WINDOW_SEC = 0.35;
+
+    let processingActive = false;
+    let lastResults = null;
+    let lastFeedbackText = "IDLE";
+    let speedIndex = 0;
+    const SPEEDS = [0.5, 1.0, 1.25, 1.5, 2.0];
+
+    let userScrubbing = false;
+
+    // anti-double-count guards
+    let lastPlaybackTime = 0;
+    const SEEK_RESET_EPS = 0.08;
+
+    // revoke blob urls to avoid memory leaks on mobile
+    let activeBlobUrl = null;
 
     const CONFIG = {
       squat:  { upThreshold: 160, downThreshold: 105, goodRepLimit: 120 },
@@ -247,25 +647,174 @@
     };
 
     // ---------------------------
+    // MOBILE SAFETY HELPERS
+    // ---------------------------
+    function isMobileUA() {
+      return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    }
+
+    function prepareVideoForMobile(videoEl) {
+      videoEl.playsInline = true;
+      videoEl.muted = true;
+      videoEl.setAttribute("playsinline", "");
+      videoEl.setAttribute("webkit-playsinline", "true");
+      videoEl.controls = false;
+    }
+
+    prepareVideoForMobile(playbackVideo);
+
+    // canvas sizing: match displayed size + DPR
+    function fitCanvasToContainer() {
+      const rect = playbackVideo.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+      canvas.style.width = rect.width + "px";
+      canvas.style.height = rect.height + "px";
+
+      // draw in CSS pixels
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function getCanvasCssSize() {
+      const rect = canvas.getBoundingClientRect();
+      return { w: rect.width || 1, h: rect.height || 1 };
+    }
+
+    async function ensureVideoFrameReady() {
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    }
+
+    // ---------------------------
     // HELPERS
     // ---------------------------
-    function resetStats() {
+    function mean(arr) {
+      if (!arr || arr.length === 0) return 0;
+      return arr.reduce((s, x) => s + x, 0) / arr.length;
+    }
+    function stdDev(arr) {
+      if (!arr || arr.length < 2) return 0;
+      const m = mean(arr);
+      const v = arr.reduce((s, x) => s + Math.pow(x - m, 2), 0) / (arr.length - 1);
+      return Math.sqrt(v);
+    }
+    function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+    function round1(n) { return Math.round(n * 10) / 10; }
+
+    function formatTime(seconds) {
+      seconds = Math.max(0, seconds || 0);
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function escapeHtml(s) {
+      return (s || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function setCanvasCursor() {
+      canvas.style.cursor = annotateMode ? "crosshair" : "default";
+      annoModeBadge.style.display = annotateMode ? "block" : "none";
+    }
+
+    function safePauseVideo() {
+      try { playbackVideo.pause(); } catch {}
+      processingActive = false;
+      updatePlayPauseUI();
+    }
+
+    function updatePlayPauseUI() {
+      if (!btnPlayPause) return;
+      const hasVideo = !!playbackVideo.src;
+      if (!hasVideo) {
+        btnPlayPause.textContent = "Play";
+        btnPlayPause.disabled = true;
+        btnPlayPause.classList.add("opacity-50");
+        return;
+      }
+      btnPlayPause.disabled = false;
+      btnPlayPause.classList.remove("opacity-50");
+      btnPlayPause.textContent = playbackVideo.paused ? "Play" : "Pause";
+    }
+
+    function updateTimeUI() {
+      if (!timeLabel || !scrubber) return;
+      const dur = playbackVideo.duration || 0;
+      const cur = playbackVideo.currentTime || 0;
+      timeLabel.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+      if (!userScrubbing) scrubber.value = dur ? Math.round((cur / dur) * 1000) : 0;
+    }
+
+    function resetAnalysisOnly() {
       count = 0;
       stage = "up";
       currentRepMinAngle = 360;
+      repStartTime = 0;
       historyData = [];
+      lastFeedbackText = "IDLE";
+      formFaultCounts = {};
+      lastResults = null;
+
+      if (!sessionId) sessionId = "sess_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+      if (!sessionStartTimeISO) sessionStartTimeISO = new Date().toISOString();
+
+      lastPlaybackTime = playbackVideo.currentTime || 0;
+
       document.getElementById('repCount').innerText = "0";
       document.getElementById('currentAngle').innerText = "--°";
       document.getElementById('feedback').innerText = "IDLE";
       document.getElementById('trackingSide').innerText = "--";
       historyList.innerHTML = '<p class="text-gray-500 text-sm text-center italic py-8 opacity-50">Complete a rep to see details</p>';
       replayOverlay.classList.add('hidden');
+
+      populateReportUI(buildSessionReport());
+      renderAnnoList();
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      renderFrame();
+      updateTimeUI();
+      updatePlayPauseUI();
     }
 
-    function formatTime(seconds) {
-      const mins = Math.floor(seconds / 60);
-      const secs = Math.floor(seconds % 60);
-      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    function resetAll(clearAnnotations = true) {
+      count = 0;
+      stage = "up";
+      currentRepMinAngle = 360;
+      repStartTime = 0;
+      historyData = [];
+      lastFeedbackText = "IDLE";
+
+      sessionId = "sess_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+      sessionStartTimeISO = new Date().toISOString();
+      formFaultCounts = {};
+
+      if (clearAnnotations) annotations = [];
+      exitAnnotateMode(true);
+
+      lastResults = null;
+      lastPlaybackTime = 0;
+
+      document.getElementById('repCount').innerText = "0";
+      document.getElementById('currentAngle').innerText = "--°";
+      document.getElementById('feedback').innerText = "IDLE";
+      document.getElementById('trackingSide').innerText = "--";
+      historyList.innerHTML = '<p class="text-gray-500 text-sm text-center italic py-8 opacity-50">Complete a rep to see details</p>';
+      replayOverlay.classList.add('hidden');
+
+      populateReportUI(buildSessionReport());
+      renderAnnoList();
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      renderFrame();
+      updateTimeUI();
+      updatePlayPauseUI();
     }
 
     function addHistoryItem(repNum, status, angle, timestamp) {
@@ -290,6 +839,9 @@
       historyData.push({ repNum, status, angle, timestamp });
     }
 
+    // ---------------------------
+    // MATH / DRAWING
+    // ---------------------------
     function calculateAngle(a, b, c) {
       const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
       let angle = Math.abs(radians * 180.0 / Math.PI);
@@ -303,42 +855,44 @@
       return Math.atan2(dx, dy) * (180 / Math.PI);
     }
 
-    function drawGlowLine(ctx, start, end, color) {
-      ctx.beginPath();
-      ctx.moveTo(start.x * canvas.width, start.y * canvas.height);
-      ctx.lineTo(end.x * canvas.width, end.y * canvas.height);
-      ctx.lineWidth = 8;
-      ctx.strokeStyle = color;
-      ctx.lineCap = 'round';
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = color;
-      ctx.stroke();
+    function drawGlowLine(ctx2, start, end, color) {
+      const { w, h } = getCanvasCssSize();
+      ctx2.beginPath();
+      ctx2.moveTo(start.x * w, start.y * h);
+      ctx2.lineTo(end.x * w, end.y * h);
+      ctx2.lineWidth = 8;
+      ctx2.strokeStyle = color;
+      ctx2.lineCap = 'round';
+      ctx2.shadowBlur = 15;
+      ctx2.shadowColor = color;
+      ctx2.stroke();
 
-      ctx.beginPath();
-      ctx.moveTo(start.x * canvas.width, start.y * canvas.height);
-      ctx.lineTo(end.x * canvas.width, end.y * canvas.height);
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#ffffff';
-      ctx.shadowBlur = 0;
-      ctx.stroke();
+      ctx2.beginPath();
+      ctx2.moveTo(start.x * w, start.y * h);
+      ctx2.lineTo(end.x * w, end.y * h);
+      ctx2.lineWidth = 3;
+      ctx2.strokeStyle = '#ffffff';
+      ctx2.shadowBlur = 0;
+      ctx2.stroke();
     }
 
-    function drawGlowJoint(ctx, point, color) {
-      const x = point.x * canvas.width;
-      const y = point.y * canvas.height;
+    function drawGlowJoint(ctx2, point, color) {
+      const { w, h } = getCanvasCssSize();
+      const x = point.x * w;
+      const y = point.y * h;
 
-      ctx.beginPath();
-      ctx.arc(x, y, 12, 0, 2 * Math.PI);
-      ctx.fillStyle = color;
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = color;
-      ctx.fill();
+      ctx2.beginPath();
+      ctx2.arc(x, y, 12, 0, 2 * Math.PI);
+      ctx2.fillStyle = color;
+      ctx2.shadowBlur = 20;
+      ctx2.shadowColor = color;
+      ctx2.fill();
 
-      ctx.beginPath();
-      ctx.arc(x, y, 6, 0, 2 * Math.PI);
-      ctx.fillStyle = '#ffffff';
-      ctx.shadowBlur = 0;
-      ctx.fill();
+      ctx2.beginPath();
+      ctx2.arc(x, y, 6, 0, 2 * Math.PI);
+      ctx2.fillStyle = '#ffffff';
+      ctx2.shadowBlur = 0;
+      ctx2.fill();
     }
 
     function checkPauseCondition(type, landmarks, side) {
@@ -367,265 +921,650 @@
     }
 
     // ---------------------------
-    // MODE SWITCH (no inline onclick)
+    // ANNOTATION + SCREENSHOT CAPTURE
     // ---------------------------
-    function setMode(mode) {
-      stopCamera();
-      resetStats();
-
-      startPrompt.classList.remove('hidden');
-      recordingLayer.classList.add('hidden');
-      analysisLayer.classList.remove('hidden');
-
-      playbackVideo.src = "";
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      if (mode === 'upload') {
-        document.getElementById('uploadUI').classList.remove('hidden');
-        document.getElementById('cameraUI').classList.add('hidden');
-
-        btnModeUpload.classList.add('bg-blue-600', 'text-white');
-        btnModeUpload.classList.remove('text-gray-400');
-        btnModeCamera.classList.remove('bg-blue-600', 'text-white');
-        btnModeCamera.classList.add('text-gray-400');
-
-      } else {
-        document.getElementById('uploadUI').classList.add('hidden');
-        document.getElementById('cameraUI').classList.remove('hidden');
-
-        btnModeCamera.classList.add('bg-blue-600', 'text-white');
-        btnModeCamera.classList.remove('text-gray-400');
-        btnModeUpload.classList.remove('bg-blue-600', 'text-white');
-        btnModeUpload.classList.add('text-gray-400');
-
-        btnStartCamera.classList.remove('hidden');
-        cameraSelect.classList.remove('hidden');
-        btnRecord.classList.add('hidden');
-        cameraStatus.innerText = "Ready";
-      }
+    function getCanvasNormalizedPoint(evt) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (evt.clientX - rect.left) / rect.width;
+      const y = (evt.clientY - rect.top) / rect.height;
+      return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
     }
 
-    // ---------------------------
-    // CAMERA
-    // ---------------------------
-    async function getCameras() {
+    function enterAnnotateMode() {
+      if (!playbackVideo.src) {
+        alert("Upload/record a video first.");
+        return;
+      }
+      if (!playbackVideo.paused) {
+        safePauseVideo();
+      }
+
+      annotateMode = true;
+      currentAnnoTime = playbackVideo.currentTime || 0;
+      annoTimeEl.innerText = formatTime(currentAnnoTime);
+      annoTextEl.value = "";
+      currentStrokes = [];
+      currentStroke = null;
+      isDrawing = false;
+
+      setCanvasCursor();
+      annotationOverlay.style.display = "none";
+      renderFrame();
+    }
+
+    function exitAnnotateMode(silent = false) {
+      annotateMode = false;
+      currentAnnoTime = null;
+      currentStrokes = [];
+      currentStroke = null;
+      isDrawing = false;
+      annoTimeEl.innerText = "--";
+      if (!silent) annoTextEl.value = "";
+      setCanvasCursor();
+      renderFrame();
+    }
+
+    function clearDrawing() {
+      currentStrokes = [];
+      currentStroke = null;
+      renderFrame();
+    }
+
+    function drawStrokesOnContext(ctx2, strokes, w, h) {
+      if (!strokes || strokes.length === 0) return;
+      ctx2.save();
+      ctx2.lineCap = "round";
+      ctx2.lineJoin = "round";
+      ctx2.lineWidth = Math.max(4, Math.round(Math.min(w, h) * 0.006));
+      ctx2.strokeStyle = "rgba(168, 85, 247, 0.95)";
+      ctx2.shadowBlur = Math.max(8, Math.round(Math.min(w, h) * 0.01));
+      ctx2.shadowColor = "rgba(168, 85, 247, 0.6)";
+
+      for (const stroke of strokes) {
+        if (!stroke || stroke.length < 2) continue;
+        ctx2.beginPath();
+        for (let i = 0; i < stroke.length; i++) {
+          const p = stroke[i];
+          const x = p.x * w;
+          const y = p.y * h;
+          if (i === 0) ctx2.moveTo(x, y);
+          else ctx2.lineTo(x, y);
+        }
+        ctx2.stroke();
+      }
+
+      ctx2.shadowBlur = 0;
+      ctx2.lineWidth = Math.max(2, Math.round(Math.min(w, h) * 0.003));
+      ctx2.strokeStyle = "rgba(255,255,255,0.9)";
+      for (const stroke of strokes) {
+        if (!stroke || stroke.length < 2) continue;
+        ctx2.beginPath();
+        for (let i = 0; i < stroke.length; i++) {
+          const p = stroke[i];
+          const x = p.x * w;
+          const y = p.y * h;
+          if (i === 0) ctx2.moveTo(x, y);
+          else ctx2.lineTo(x, y);
+        }
+        ctx2.stroke();
+      }
+      ctx2.restore();
+    }
+
+    async function captureAnnotationScreenshot(strokes) {
       try {
-        // Ask permission (labels show only after permission)
-        await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        await ensureVideoFrameReady();
+        const w = playbackVideo.videoWidth || 1280;
+        const h = playbackVideo.videoHeight || 720;
 
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        const off = document.createElement("canvas");
+        off.width = w;
+        off.height = h;
+        const offCtx = off.getContext("2d", { alpha: false });
 
-        cameraSelect.innerHTML = '';
-        if (videoDevices.length === 0) {
-          const option = document.createElement('option');
-          option.text = "No Camera Found";
-          cameraSelect.appendChild(option);
-          return;
-        }
+        offCtx.fillStyle = "#000";
+        offCtx.fillRect(0, 0, w, h);
 
-        videoDevices.forEach((device, index) => {
-          const option = document.createElement('option');
-          option.value = device.deviceId;
-          option.text = device.label || `Camera ${index + 1}`;
-          cameraSelect.appendChild(option);
-        });
-      } catch (err) {
-        console.error("Error listing cameras:", err);
+        // iOS: drawImage can fail if frame not ready -> ensureVideoFrameReady above
+        offCtx.drawImage(playbackVideo, 0, 0, w, h);
+
+        drawStrokesOnContext(offCtx, strokes, w, h);
+
+        // compress slightly for mobile memory
+        const q = isMobileUA() ? 0.82 : 0.9;
+        return off.toDataURL("image/jpeg", q);
+      } catch (e) {
+        console.warn("captureAnnotationScreenshot failed:", e);
+        return null;
       }
     }
 
-    async function startCamera() {
-      try {
-        cameraStatus.innerText = "Opening...";
-
-        // Secure context required for camera
-        if (!window.isSecureContext) {
-          alert("Camera requires HTTPS or http://localhost. Do NOT open via file://");
-          cameraStatus.innerText = "Blocked (HTTPS required)";
-          return;
-        }
-
-        const selectedId = cameraSelect.value;
-
-        let stream = null;
-        const tryConstraints = async (useExact) => {
-          const constraints = {
-            video: {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              ...(selectedId
-                ? { deviceId: useExact ? { exact: selectedId } : { ideal: selectedId } }
-                : {})
-            },
-            audio: false
-          };
-          return await navigator.mediaDevices.getUserMedia(constraints);
-        };
-
-        try {
-          stream = await tryConstraints(true);
-        } catch (e) {
-          console.warn("Exact deviceId failed, falling back:", e);
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        }
-
-        cameraStream = stream;
-
-        livePreview.srcObject = cameraStream;
-
-        await new Promise((resolve) => {
-          livePreview.onloadedmetadata = () => resolve();
-        });
-
-        await livePreview.play();
-
-        startPrompt.classList.add('hidden');
-        analysisLayer.classList.add('hidden');
-        recordingLayer.classList.remove('hidden');
-
-        btnStartCamera.classList.add('hidden');
-        cameraSelect.classList.add('hidden');
-        btnRecord.classList.remove('hidden');
-        cameraStatus.innerText = "Active";
-
-      } catch (err) {
-        console.error("Camera Error:", err);
-        if (err.name === "NotAllowedError") alert("Camera permission denied. Allow camera in site settings (lock icon).");
-        else if (err.name === "NotFoundError") alert("No camera found on this device.");
-        else if (err.name === "NotReadableError") alert("Camera is being used by another app (Zoom/Teams/OBS). Close it.");
-        else alert("Could not start camera.\nError: " + err.message);
-        cameraStatus.innerText = "Error";
+    async function saveAnnotation() {
+      if (!annotateMode) {
+        alert("Click Annotate Frame first (or press A).");
+        return;
       }
+      const text = (annoTextEl.value || "").trim();
+      if (!text) {
+        alert("Please enter annotation text.");
+        return;
+      }
+      if (currentStrokes.length === 0) {
+        const ok = confirm("No drawing found. Save text-only annotation?");
+        if (!ok) return;
+      }
+
+      const img = await captureAnnotationScreenshot(currentStrokes);
+
+      const ann = {
+        id: "anno_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        timeSec: Number((currentAnnoTime || 0).toFixed(3)),
+        text,
+        strokes: currentStrokes.map(st => st.map(p => ({ x: p.x, y: p.y }))),
+        imageDataUrl: img || null
+      };
+      annotations.push(ann);
+      annotations.sort((a, b) => a.timeSec - b.timeSec);
+
+      renderAnnoList();
+      populateReportUI(buildSessionReport());
+
+      annoTextEl.value = "";
+      clearDrawing();
+      alert("Annotation saved (with screenshot)!");
     }
 
-    function stopCamera() {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(t => t.stop());
-        cameraStream = null;
-      }
-      livePreview.srcObject = null;
-    }
-
-    function toggleRecording() {
-      if (!cameraStream || cameraStream.getVideoTracks().length === 0) {
-        alert("Camera is not active. Click Activate first.");
+    function renderAnnoList() {
+      if (!annotations || annotations.length === 0) {
+        annoListEl.innerHTML = `<div class="text-sm text-gray-500 italic">No annotations yet.</div>`;
         return;
       }
 
-      if (!isRecording) {
-        recordedChunks = [];
+      annoListEl.innerHTML = annotations
+        .map(a => {
+          const safe = escapeHtml(a.text);
+          const thumb = a.imageDataUrl
+            ? `<img src="${a.imageDataUrl}" alt="anno" style="margin-top:8px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);max-width:260px;width:100%;display:block;">`
+            : `<div style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.6);">No screenshot</div>`;
+          return `
+            <div class="bg-gray-950 border border-gray-700 rounded-lg p-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex-1">
+                  <div class="text-xs text-gray-400 font-mono">${formatTime(a.timeSec)}</div>
+                  <div class="text-sm text-white font-semibold mt-1">${safe}</div>
+                </div>
+                <div class="flex gap-2">
+                  <button data-jump="${a.id}"
+                    class="px-3 py-1.5 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold">
+                    Jump
+                  </button>
+                  <button data-del="${a.id}"
+                    class="px-3 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white font-semibold">
+                    Delete
+                  </button>
+                </div>
+              </div>
+              ${thumb}
+            </div>
+          `;
+        })
+        .join("");
 
-        try {
-          mediaRecorder = new MediaRecorder(cameraStream);
-        } catch (e) {
-          alert("Browser not supported for recording.");
-          return;
+      annoListEl.querySelectorAll("[data-jump]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-jump");
+          const ann = annotations.find(x => x.id === id);
+          if (!ann) return;
+          safePauseVideo();
+          playbackVideo.currentTime = ann.timeSec;
+          showAnnotationOverlay(ann);
+          renderFrame();
+        });
+      });
+
+      annoListEl.querySelectorAll("[data-del]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-del");
+          annotations = annotations.filter(x => x.id !== id);
+          renderAnnoList();
+          populateReportUI(buildSessionReport());
+          renderFrame();
+        });
+      });
+    }
+
+    function findActiveAnnotation(t) {
+      if (!annotations || annotations.length === 0) return null;
+      let best = null;
+      let bestDt = 999;
+      for (const a of annotations) {
+        const dt = Math.abs(t - a.timeSec);
+        if (dt <= ANNO_WINDOW_SEC && dt < bestDt) {
+          best = a;
+          bestDt = dt;
         }
+      }
+      return best;
+    }
 
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data && event.data.size > 0) recordedChunks.push(event.data);
-        };
+    function showAnnotationOverlay(ann) {
+      if (!ann) {
+        annotationOverlay.style.display = "none";
+        return;
+      }
+      annotationOverlayBody.innerText = ann.text;
+      annotationOverlay.style.display = "block";
+    }
 
-        mediaRecorder.onstop = () => completeRecording();
+    function drawAnnotationStrokes(ann) {
+      if (!ann || !ann.strokes) return;
+      const { w, h } = getCanvasCssSize();
 
-        mediaRecorder.start();
-        isRecording = true;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = "rgba(168, 85, 247, 0.95)";
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = "rgba(168, 85, 247, 0.6)";
 
-        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-sm"></div><span>End Workout</span>`;
-        btnRecord.classList.remove('bg-red-600');
-        btnRecord.classList.add('bg-gray-600');
-        recordingIndicator.classList.remove('hidden');
-        recordingLayer.classList.add('recording-pulse');
-        cameraStatus.innerText = "Recording...";
+      for (const stroke of ann.strokes) {
+        if (!stroke || stroke.length < 2) continue;
+        ctx.beginPath();
+        for (let i = 0; i < stroke.length; i++) {
+          const p = stroke[i];
+          const x = p.x * w;
+          const y = p.y * h;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
 
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      for (const stroke of ann.strokes) {
+        if (!stroke || stroke.length < 2) continue;
+        ctx.beginPath();
+        for (let i = 0; i < stroke.length; i++) {
+          const p = stroke[i];
+          const x = p.x * w;
+          const y = p.y * h;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    function drawCurrentDraftStrokes() {
+      if (!annotateMode) return;
+      drawAnnotationStrokes({ strokes: currentStrokes });
+    }
+
+    // Drawing events (pointer)
+    canvas.addEventListener("pointerdown", (e) => {
+      if (!annotateMode) return;
+      isDrawing = true;
+      try { canvas.setPointerCapture(e.pointerId); } catch {}
+      currentStroke = [];
+      const p = getCanvasNormalizedPoint(e);
+      currentStroke.push(p);
+      currentStrokes.push(currentStroke);
+      e.preventDefault();
+      renderFrame();
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+      if (!annotateMode || !isDrawing || !currentStroke) return;
+      const p = getCanvasNormalizedPoint(e);
+      currentStroke.push(p);
+      e.preventDefault();
+      renderFrame();
+    });
+
+    function endStroke(e) {
+      if (!annotateMode) return;
+      isDrawing = false;
+      currentStroke = null;
+      try { canvas.releasePointerCapture(e.pointerId); } catch {}
+      e.preventDefault();
+      renderFrame();
+    }
+    canvas.addEventListener("pointerup", endStroke);
+    canvas.addEventListener("pointercancel", endStroke);
+    canvas.addEventListener("pointerleave", (e) => {
+      if (annotateMode && isDrawing) endStroke(e);
+    });
+
+    // Touch fallback (iOS)
+    function touchToPointerLike(touch) {
+      return { clientX: touch.clientX, clientY: touch.clientY };
+    }
+
+    canvas.addEventListener("touchstart", (e) => {
+      if (!annotateMode) return;
+      e.preventDefault();
+      const t = e.touches[0];
+      if (!t) return;
+      const p = getCanvasNormalizedPoint(touchToPointerLike(t));
+      isDrawing = true;
+      currentStroke = [p];
+      currentStrokes.push(currentStroke);
+      renderFrame();
+    }, { passive: false });
+
+    canvas.addEventListener("touchmove", (e) => {
+      if (!annotateMode || !isDrawing || !currentStroke) return;
+      e.preventDefault();
+      const t = e.touches[0];
+      if (!t) return;
+      const p = getCanvasNormalizedPoint(touchToPointerLike(t));
+      currentStroke.push(p);
+      renderFrame();
+    }, { passive: false });
+
+    canvas.addEventListener("touchend", (e) => {
+      if (!annotateMode) return;
+      e.preventDefault();
+      isDrawing = false;
+      currentStroke = null;
+      renderFrame();
+    }, { passive: false });
+
+    // ---------------------------
+    // SCORING + AUTO NOTES
+    // ---------------------------
+    function buildAutoNotes(report) {
+      const notes = [];
+      const type = report.exerciseType;
+      const top = (report.topFaults || []).slice(0, 3);
+      if (top.length > 0) notes.push(`Main flags: ${top.map(x => x.fault).join(", ")}.`);
+      else notes.push("No major flags detected by the system.");
+
+      const goodPct = report.scores?.goodRepPct ?? 0;
+      const stability = report.scores?.stabilityScore ?? 0;
+
+      if (goodPct < 60) notes.push("Quality is low — coach should focus on range/targets first.");
+      else if (goodPct < 85) notes.push("Decent — refine depth + tempo.");
+      else notes.push("Strong session — progress load/tempo.");
+
+      if (stability < 60) notes.push("Inconsistent reps — cue slower, repeatable range.");
+      else if (stability < 80) notes.push("Moderate consistency — aim smoother control.");
+      else notes.push("Very consistent — great control.");
+
+      if (type === "squat") notes.push("Squat cue: chest up, knees track, consistent depth.");
+      if (type === "pushup") notes.push("Push-up cue: strong plank line, avoid hip sag.");
+      if (type === "curl") notes.push("Curl cue: elbows pinned, avoid torso swing.");
+
+      return notes;
+    }
+
+    function computeScores(type, repAngles, goodRepPct, avgMinAngle, stdMinAngle) {
+      const cfg = CONFIG[type];
+      const stabilityScore = clamp(100 - (stdMinAngle * 4), 0, 100);
+      const depthDelta = (avgMinAngle - cfg.goodRepLimit);
+      const depthScore = clamp(100 - (depthDelta * 2.5), 0, 100);
+      const overall = clamp((0.5 * goodRepPct) + (0.3 * stabilityScore) + (0.2 * depthScore), 0, 100);
+
+      let verdict = "Keep training";
+      if (overall >= 85) verdict = "Excellent session";
+      else if (overall >= 70) verdict = "Good — refine form";
+      else if (overall >= 50) verdict = "Needs coaching focus";
+      else verdict = "High correction needed";
+
+      return {
+        goodRepPct: round1(goodRepPct),
+        stabilityScore: round1(stabilityScore),
+        depthScore: round1(depthScore),
+        overallScore: round1(overall),
+        verdict
+      };
+    }
+
+    // ---------------------------
+    // REPORT BUILD + UI
+    // ---------------------------
+    function buildSessionReport() {
+      const type = exerciseSelect.value;
+
+      const totalReps = historyData.length;
+      const goodReps = historyData.filter(r => r.status === "Good Rep").length;
+      const badReps = totalReps - goodReps;
+
+      const repAngles = historyData.map(r => (typeof r.angle === "number" ? r.angle : 0)).filter(x => x > 0);
+      const avgMinAngle = repAngles.length ? mean(repAngles) : 0;
+      const stdMinAngle = repAngles.length ? stdDev(repAngles) : 0;
+      const goodRepPct = totalReps ? (goodReps / totalReps) * 100 : 0;
+
+      const topFaults = Object.entries(formFaultCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([fault, count]) => ({ fault, count }));
+
+      const scores = computeScores(type, repAngles, goodRepPct, avgMinAngle, stdMinAngle);
+
+      return {
+        sessionId,
+        createdAt: new Date().toISOString(),
+        sessionStartTimeISO,
+        exerciseType: type,
+        totals: { totalReps, goodReps, badReps },
+        angles: {
+          avgMinAngle: Number(avgMinAngle.toFixed(2)),
+          stdMinAngle: Number(stdMinAngle.toFixed(2))
+        },
+        scores,
+        repHistory: historyData.map(r => ({
+          repNum: r.repNum,
+          status: r.status,
+          minAngle: Number((r.angle || 0).toFixed(2)),
+          timestampSec: Number((r.timestamp || 0).toFixed(3))
+        })),
+        topFaults,
+        notesAuto: buildAutoNotes({ exerciseType: type, topFaults, scores }),
+        annotations: annotations.map(a => ({
+          id: a.id,
+          timeSec: a.timeSec,
+          text: a.text,
+          strokes: a.strokes,
+          imageDataUrl: a.imageDataUrl || null
+        }))
+      };
+    }
+
+    function populateReportUI(report) {
+      reportMeta.innerText = `Session: ${report.sessionId || "--"} • ${new Date(report.createdAt || Date.now()).toLocaleString()}`;
+      reportExercise.innerText = (report.exerciseType || "--").toUpperCase();
+
+      reportTotalReps.innerText = report.totals?.totalReps ?? 0;
+      reportGoodReps.innerText = report.totals?.goodReps ?? 0;
+      reportBadReps.innerText = report.totals?.badReps ?? 0;
+
+      reportOverallScore.innerText = (report.scores?.overallScore ?? "--") + (report.totals?.totalReps ? "/100" : "");
+      reportStabilityScore.innerText = (report.scores?.stabilityScore ?? "--") + (report.totals?.totalReps ? "/100" : "");
+      reportGoodPct.innerText = (report.scores?.goodRepPct ?? "--") + (report.totals?.totalReps ? "%" : "");
+      reportVerdict.innerText = report.scores?.verdict ?? "--";
+
+      reportAvgMinAngle.innerText = report.angles?.avgMinAngle ? `${Math.round(report.angles.avgMinAngle)}°` : "--";
+      reportStdMinAngle.innerText = report.angles?.stdMinAngle ? `${round1(report.angles.stdMinAngle)}°` : "--";
+
+      if (!report.topFaults || report.topFaults.length === 0) {
+        reportFaults.innerText = "No major issues detected.";
       } else {
-        mediaRecorder.stop();
-        isRecording = false;
+        reportFaults.innerHTML = report.topFaults
+          .slice(0, 6)
+          .map(x => `• ${escapeHtml(String(x.fault))} <span style="color:#6b7280;">(${x.count})</span>`)
+          .join("<br/>");
+      }
 
-        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-full"></div><span>Start Recording</span>`;
-        btnRecord.classList.remove('bg-gray-600');
-        btnRecord.classList.add('bg-red-600');
-        recordingIndicator.classList.add('hidden');
-        recordingLayer.classList.remove('recording-pulse');
-        cameraStatus.innerText = "Processing...";
+      if (!report.notesAuto || report.notesAuto.length === 0) {
+        reportNotesAuto.innerText = "No notes yet.";
+      } else {
+        reportNotesAuto.innerHTML = report.notesAuto.map(n => `• ${escapeHtml(String(n))}`).join("<br/>");
+      }
+
+      // show screenshots in report (limit for safety in PDF)
+      if (!report.annotations || report.annotations.length === 0) {
+        reportAnnotations.innerText = "No annotations.";
+      } else {
+        const maxShow = 20; // UI can show more; keep reasonable
+        reportAnnotations.innerHTML = report.annotations
+          .slice(0, maxShow)
+          .map(a => {
+            const img = a.imageDataUrl
+              ? `<img class="report-anno-img" src="${a.imageDataUrl}" alt="Annotated frame"/>`
+              : `<div style="margin-top:8px;font-size:12px;color:#6b7280;">No screenshot saved for this annotation.</div>`;
+            return `
+              <div class="report-anno-card">
+                <div class="report-anno-meta">${escapeHtml(formatTime(a.timeSec))}</div>
+                <div class="report-anno-text">${escapeHtml(a.text)}</div>
+                ${img}
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      if (!report.repHistory || report.repHistory.length === 0) {
+        reportTable.innerHTML = `<tr><td class="p-2" colspan="4">No reps yet</td></tr>`;
+      } else {
+        reportTable.innerHTML = report.repHistory
+          .map(r => `
+            <tr style="border-top:1px solid #e5e7eb;">
+              <td class="p-2">${r.repNum}</td>
+              <td class="p-2">${escapeHtml(String(r.status))}</td>
+              <td class="p-2">${Math.round(r.minAngle)}°</td>
+              <td class="p-2">${formatTime(r.timestampSec || 0)}</td>
+            </tr>
+          `)
+          .join("");
       }
     }
 
-    function completeRecording() {
-      if (recordedChunks.length === 0) {
-        alert("Recording failed: No data captured.");
-        stopCamera();
-        setMode('camera');
-        return;
-      }
-
-      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+    function downloadJson(filename, dataObj) {
+      const blob = new Blob([JSON.stringify(dataObj, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-
-      stopCamera();
-      recordingLayer.classList.add('hidden');
-      analysisLayer.classList.remove('hidden');
-
-      playbackVideo.src = url;
-      playbackVideo.muted = true;
-      resetStats();
-
-      playbackVideo.onloadedmetadata = async () => {
-        canvas.width = playbackVideo.videoWidth;
-        canvas.height = playbackVideo.videoHeight;
-
-        try {
-          await playbackVideo.play();
-          processVideo();
-        } catch (e) {
-          console.error("Playback play blocked:", e);
-          alert("Browser blocked playback. Click anywhere and press Replay.");
-        }
-      };
-
-      playbackVideo.onended = () => {
-        replayOverlay.classList.remove('hidden');
-      };
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     }
 
     // ---------------------------
-    // PROCESSING
+    // PDF EXPORT (mobile-safe)
     // ---------------------------
-    async function replayVideo() {
-      resetStats();
-      playbackVideo.currentTime = 0;
-      try {
-        await playbackVideo.play();
-        processVideo();
-      } catch (e) {
-        console.error("Replay blocked:", e);
-      }
-    }
+    async function downloadPdfReport() {
+      const report = buildSessionReport();
+      populateReportUI(report);
 
-    async function processVideo() {
-      if (!pose) return;
-      if (playbackVideo.paused && !playbackVideo.ended) return;
-      if (playbackVideo.ended) return;
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 120)));
 
-      try {
-        await pose.send({ image: playbackVideo });
-      } catch (e) {
-        console.error("pose.send failed:", e);
+      const { jsPDF } = window.jspdf || {};
+      if (!jsPDF) {
+        alert("jsPDF failed to load. Check your CDN/internet.");
         return;
       }
 
-      requestAnimationFrame(processVideo);
+      const mobile = isMobileUA();
+      const scale = mobile ? 1.2 : 2;
+
+      const canvasShot = await html2canvas(reportArea, {
+        scale,
+        backgroundColor: "#ffffff",
+        useCORS: true
+      });
+
+      const imgData = canvasShot.toDataURL("image/jpeg", mobile ? 0.82 : 0.95);
+
+      const pdf = new jsPDF("p", "pt", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      const margin = 24;
+      const usableWidth = pageWidth - margin * 2;
+
+      const imgWidth = usableWidth;
+      const imgHeight = (canvasShot.height * imgWidth) / canvasShot.width;
+
+      if (imgHeight <= (pageHeight - margin * 2)) {
+        pdf.addImage(imgData, "JPEG", margin, margin, imgWidth, imgHeight);
+      } else {
+        const sliceCanvas = document.createElement("canvas");
+        const sliceCtx = sliceCanvas.getContext("2d");
+
+        const pxPerPt = canvasShot.width / imgWidth;
+        const pageUsableHeightPt = pageHeight - margin * 2;
+        const pageUsableHeightPx = Math.floor(pageUsableHeightPt * pxPerPt);
+
+        let offsetYpx = 0;
+        let pageIndex = 0;
+
+        while (offsetYpx < canvasShot.height) {
+          sliceCanvas.width = canvasShot.width;
+          sliceCanvas.height = Math.min(pageUsableHeightPx, canvasShot.height - offsetYpx);
+
+          sliceCtx.clearRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+          sliceCtx.drawImage(
+            canvasShot,
+            0, offsetYpx, sliceCanvas.width, sliceCanvas.height,
+            0, 0, sliceCanvas.width, sliceCanvas.height
+          );
+
+          const sliceImg = sliceCanvas.toDataURL("image/jpeg", mobile ? 0.82 : 0.95);
+          const sliceHeightPt = (sliceCanvas.height / pxPerPt);
+
+          if (pageIndex > 0) pdf.addPage();
+          pdf.addImage(sliceImg, "JPEG", margin, margin, imgWidth, sliceHeightPt);
+
+          offsetYpx += sliceCanvas.height;
+          pageIndex++;
+        }
+      }
+
+      pdf.save(`${report.sessionId}_${report.exerciseType}_Report.pdf`);
     }
 
     // ---------------------------
-    // POSE RESULTS (Rep logic included)
+    // RENDERING / POSE PROCESSING
     // ---------------------------
-    function onResults(results) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (!results.poseLandmarks) return;
+    function renderFrame() {
+      // canvas is drawn in CSS pixels (ctx transform applied in fitCanvasToContainer)
+      const { w, h } = getCanvasCssSize();
+      ctx.clearRect(0, 0, w, h);
 
-      const landmarks = results.poseLandmarks;
+      const t = playbackVideo.currentTime || 0;
+      const activeAnn = findActiveAnnotation(t);
+
+      if (activeAnn && !annotateMode) {
+        drawAnnotationStrokes(activeAnn);
+        showAnnotationOverlay(activeAnn);
+      } else {
+        if (annotateMode) {
+          drawCurrentDraftStrokes();
+          const near = findActiveAnnotation(t);
+          if (near) {
+            drawAnnotationStrokes(near);
+            showAnnotationOverlay(near);
+          } else {
+            annotationOverlay.style.display = "none";
+          }
+        } else {
+          annotationOverlay.style.display = "none";
+        }
+      }
+
+      if (annotateMode) return;
+
+      if (!lastResults || !lastResults.poseLandmarks) return;
+
+      const landmarks = lastResults.poseLandmarks;
       const type = exerciseSelect.value;
       const cfg = CONFIG[type];
 
@@ -675,41 +1614,43 @@
           drawGlowJoint(ctx, b, themeColor);
           drawGlowJoint(ctx, c, themeColor);
 
-          if (stage === "up") {
-            feedbackText = (angle < cfg.upThreshold) ? ((type === 'curl') ? "Fully Extend" : "Lock Out") : "Start";
-            themeColor = (angle < cfg.upThreshold) ? "#fbbf24" : "#3b82f6";
+          if (!playbackVideo.paused && processingActive) {
+            if (stage === "up") {
+              feedbackText = (angle < cfg.upThreshold) ? ((type === 'curl') ? "Fully Extend" : "Lock Out") : "Start";
+              themeColor = (angle < cfg.upThreshold) ? "#fbbf24" : "#3b82f6";
 
-            // Start the rep when reaching bottom (downThreshold)
-            if (angle < cfg.downThreshold) {
-              stage = "down";
-              feedbackText = "Push";
-              themeColor = "#22c55e";
-              repStartTime = playbackVideo.currentTime || 0;
-              currentRepMinAngle = angle;
+              if (angle < cfg.downThreshold) {
+                stage = "down";
+                feedbackText = "Push";
+                themeColor = "#22c55e";
+                repStartTime = playbackVideo.currentTime || 0;
+                currentRepMinAngle = angle;
+              }
+            } else if (stage === "down") {
+              currentRepMinAngle = Math.min(currentRepMinAngle, angle);
+
+              if (angle > cfg.upThreshold) {
+                count += 1;
+                document.getElementById('repCount').innerText = String(count);
+
+                const isGood = currentRepMinAngle <= cfg.goodRepLimit;
+                const status = isGood ? "Good Rep" : "Bad Rep";
+                addHistoryItem(count, status, currentRepMinAngle, repStartTime);
+
+                feedbackText = isGood ? "Good Rep ✅" : "Go Deeper ⚠️";
+                themeColor = isGood ? "#22c55e" : "#fbbf24";
+
+                stage = "up";
+                currentRepMinAngle = 360;
+
+                populateReportUI(buildSessionReport());
+              } else {
+                feedbackText = "Working...";
+                themeColor = "#22c55e";
+              }
             }
-          } else if (stage === "down") {
-            // Track min angle during the rep
-            currentRepMinAngle = Math.min(currentRepMinAngle, angle);
-
-            // Rep completes when we return to the top (upThreshold)
-            if (angle > cfg.upThreshold) {
-              count += 1;
-              document.getElementById('repCount').innerText = String(count);
-
-              const isGood = currentRepMinAngle <= cfg.goodRepLimit;
-              const status = isGood ? "Good Rep" : "Bad Rep";
-              addHistoryItem(count, status, currentRepMinAngle, repStartTime);
-
-              feedbackText = isGood ? "Good Rep ✅" : "Go Deeper ⚠️";
-              themeColor = isGood ? "#22c55e" : "#fbbf24";
-
-              // Reset for next rep
-              stage = "up";
-              currentRepMinAngle = 360;
-            } else {
-              feedbackText = "Working...";
-              themeColor = "#22c55e";
-            }
+          } else {
+            feedbackText = (stage === "down") ? "Working..." : "Start";
           }
         }
       } else {
@@ -717,21 +1658,444 @@
         document.getElementById('trackingSide').innerText = "--";
       }
 
-      const feedbackEl = document.getElementById('feedback');
-      feedbackEl.innerText = feedbackText;
+      document.getElementById('feedback').innerText = feedbackText;
+
+      if (feedbackText !== lastFeedbackText) {
+        if (
+          feedbackText &&
+          feedbackText !== "IDLE" &&
+          feedbackText !== "Start" &&
+          feedbackText !== "Working..." &&
+          feedbackText !== "Not detected" &&
+          feedbackText !== "Push"
+        ) {
+          formFaultCounts[feedbackText] = (formFaultCounts[feedbackText] || 0) + 1;
+        }
+        lastFeedbackText = feedbackText;
+      }
+    }
+
+    function onResults(results) {
+      lastResults = results;
+      renderFrame();
+    }
+
+    async function processLoop() {
+      if (!pose) return;
+      if (!processingActive) return;
+      if (!playbackVideo || playbackVideo.ended) return;
+      if (playbackVideo.paused) return;
+      if (annotateMode) return;
+
+      try {
+        await pose.send({ image: playbackVideo });
+      } catch (e) {
+        console.error("pose.send failed:", e);
+        processingActive = false;
+        return;
+      }
+      requestAnimationFrame(processLoop);
+    }
+
+    async function startProcessing() {
+      if (!pose) return;
+      if (!playbackVideo.src) return;
+      if (annotateMode) return;
+      processingActive = true;
+      requestAnimationFrame(processLoop);
     }
 
     // ---------------------------
-    // INIT AI (SAFE)
+    // CONTROLS UI (NO RELOAD)
+    // ---------------------------
+    function rebuildControlsUI() {
+      controlsOverlay.innerHTML = `
+        <div class="row">
+          <button id="btnPlayPause" class="primary">Play</button>
+          <button id="btnStepBack" title="Step back 0.05s">◀︎</button>
+          <button id="btnStepFwd" title="Step forward 0.05s">▶︎</button>
+          <div class="meta" id="timeLabel">0:00 / 0:00</div>
+
+          <div class="ml-auto flex gap-2">
+            <button id="btnSpeed" title="Playback speed">1.0×</button>
+            <button id="btnToggleControls" title="Minimize controls">Hide</button>
+          </div>
+        </div>
+        <div class="row mt-2">
+          <input id="scrubber" type="range" min="0" max="1000" value="0" />
+        </div>
+        <div class="row mt-2">
+          <div class="meta">Shortcuts: Space Play/Pause • A Annotate • ESC Exit • ←/→ Seek</div>
+        </div>
+      `;
+
+      btnPlayPause = document.getElementById("btnPlayPause");
+      btnStepBack = document.getElementById("btnStepBack");
+      btnStepFwd = document.getElementById("btnStepFwd");
+      timeLabel = document.getElementById("timeLabel");
+      scrubber = document.getElementById("scrubber");
+      btnSpeed = document.getElementById("btnSpeed");
+      btnToggleControls = document.getElementById("btnToggleControls");
+
+      btnPlayPause.addEventListener("click", togglePlayPause);
+      btnStepBack.addEventListener("click", () => stepBy(-0.05));
+      btnStepFwd.addEventListener("click", () => stepBy(+0.05));
+      btnSpeed.addEventListener("click", setSpeed);
+      btnToggleControls.addEventListener("click", toggleControlsMinimize);
+
+      scrubber.addEventListener("input", () => {
+        if (!playbackVideo.duration) return;
+        userScrubbing = true;
+        const pct = Number(scrubber.value) / 1000;
+        const t = pct * playbackVideo.duration;
+        timeLabel.textContent = `${formatTime(t)} / ${formatTime(playbackVideo.duration)}`;
+      });
+
+      scrubber.addEventListener("change", () => {
+        if (!playbackVideo.duration) { userScrubbing = false; return; }
+        safePauseVideo();
+        const pct = Number(scrubber.value) / 1000;
+        playbackVideo.currentTime = pct * playbackVideo.duration;
+        userScrubbing = false;
+        renderFrame();
+        updateTimeUI();
+        updatePlayPauseUI();
+      });
+
+      btnSpeed.textContent = `${SPEEDS[speedIndex].toFixed(1)}×`;
+
+      updateTimeUI();
+      updatePlayPauseUI();
+    }
+
+    function toggleControlsMinimize() {
+      const minimized = controlsOverlay.classList.toggle("minimized");
+
+      if (minimized) {
+        controlsOverlay.innerHTML = `
+          <div class="row">
+            <button id="btnRestoreControls" class="primary">Show Controls</button>
+            <div class="meta ml-2">Controls hidden • Tap video to play/pause</div>
+          </div>
+        `;
+        document.getElementById("btnRestoreControls").addEventListener("click", () => {
+          controlsOverlay.classList.remove("minimized");
+          rebuildControlsUI();
+        });
+      } else {
+        rebuildControlsUI();
+      }
+    }
+
+    // ---------------------------
+    // CUSTOM CONTROLS LOGIC
+    // ---------------------------
+    async function togglePlayPause() {
+      if (!playbackVideo.src) return;
+
+      if (annotateMode) exitAnnotateMode(true);
+
+      if (playbackVideo.paused) {
+        try {
+          await playbackVideo.play();
+          processingActive = true;
+          updatePlayPauseUI();
+          requestAnimationFrame(processLoop);
+        } catch (e) {
+          console.error("play() blocked:", e);
+          alert("Playback blocked by browser. Tap once on the page, then try Play again.");
+        }
+      } else {
+        safePauseVideo();
+        renderFrame();
+      }
+    }
+
+    function stepBy(deltaSec) {
+      if (!playbackVideo.src) return;
+      safePauseVideo();
+      const t = clamp((playbackVideo.currentTime || 0) + deltaSec, 0, playbackVideo.duration || 0);
+      playbackVideo.currentTime = t;
+      updateTimeUI();
+      renderFrame();
+    }
+
+    function setSpeed() {
+      speedIndex = (speedIndex + 1) % SPEEDS.length;
+      playbackVideo.playbackRate = SPEEDS[speedIndex];
+      if (btnSpeed) btnSpeed.textContent = `${SPEEDS[speedIndex].toFixed(2).replace(/\.00$/, ".0")}×`;
+    }
+
+    // tap on video area to play/pause (mobile-friendly)
+document.getElementById("videoContainer").addEventListener("click", (e) => {
+  // ✅ do NOT toggle play/pause while annotating/drawing
+  if (annotateMode) return;
+
+  // Don't trigger if clicking UI controls
+  const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+  if (tag === "button" || tag === "input" || tag === "select" || tag === "textarea") return;
+
+  // If click came from overlays (controls/annotation panel), ignore
+  if (e.target.closest && (e.target.closest("#controlsOverlay") || e.target.closest("#annotationOverlay"))) return;
+
+  if (!playbackVideo.src) return;
+  togglePlayPause();
+});
+
+
+    // ---------------------------
+    // MODE SWITCH
+    // ---------------------------
+    function clearPlaybackSrc() {
+      // release blob url to prevent memory leak (important on phones)
+      if (activeBlobUrl) {
+        try { URL.revokeObjectURL(activeBlobUrl); } catch {}
+        activeBlobUrl = null;
+      }
+      playbackVideo.removeAttribute("src");
+      playbackVideo.load();
+    }
+
+    function setMode(mode) {
+      stopCamera();
+      safePauseVideo();
+      resetAll(true);
+
+      startPrompt.classList.remove('hidden');
+      recordingLayer.classList.add('hidden');
+      analysisLayer.classList.remove('hidden');
+
+      clearPlaybackSrc();
+      lastResults = null;
+
+      annotationOverlay.style.display = "none";
+      replayOverlay.classList.add("hidden");
+
+      updateTimeUI();
+      updatePlayPauseUI();
+
+      if (mode === 'upload') {
+        document.getElementById('uploadUI').classList.remove('hidden');
+        document.getElementById('cameraUI').classList.add('hidden');
+
+        btnModeUpload.classList.add('bg-blue-600', 'text-white');
+        btnModeUpload.classList.remove('text-gray-400');
+        btnModeCamera.classList.remove('bg-blue-600', 'text-white');
+        btnModeCamera.classList.add('text-gray-400');
+      } else {
+        document.getElementById('uploadUI').classList.add('hidden');
+        document.getElementById('cameraUI').classList.remove('hidden');
+
+        btnModeCamera.classList.add('bg-blue-600', 'text-white');
+        btnModeCamera.classList.remove('text-gray-400');
+        btnModeUpload.classList.remove('bg-blue-600', 'text-white');
+        btnModeUpload.classList.add('text-gray-400');
+
+        btnStartCamera.classList.remove('hidden');
+        cameraSelect.classList.remove('hidden');
+        btnRecord.classList.add('hidden');
+        cameraStatus.innerText = "Ready";
+      }
+    }
+
+    // ---------------------------
+    // CAMERA
+    // ---------------------------
+    async function getCameras() {
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        cameraSelect.innerHTML = '';
+        if (videoDevices.length === 0) {
+          const option = document.createElement('option');
+          option.text = "No Camera Found";
+          cameraSelect.appendChild(option);
+          return;
+        }
+
+        videoDevices.forEach((device, index) => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.text = device.label || `Camera ${index + 1}`;
+          cameraSelect.appendChild(option);
+        });
+      } catch (err) {
+        console.error("Error listing cameras:", err);
+      }
+    }
+
+    async function startCamera() {
+      try {
+        cameraStatus.innerText = "Opening...";
+        if (!window.isSecureContext) {
+          alert("Camera requires HTTPS or http://localhost. Do NOT open via file://");
+          cameraStatus.innerText = "Blocked (HTTPS required)";
+          return;
+        }
+
+        const selectedId = cameraSelect.value;
+
+        let stream = null;
+        const tryConstraints = async (useExact) => {
+          const constraints = {
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              ...(selectedId ? { deviceId: useExact ? { exact: selectedId } : { ideal: selectedId } } : {})
+            },
+            audio: false
+          };
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        };
+
+        try { stream = await tryConstraints(true); }
+        catch (e) {
+          console.warn("Exact deviceId failed, falling back:", e);
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+
+        cameraStream = stream;
+        livePreview.srcObject = cameraStream;
+
+        await new Promise((resolve) => { livePreview.onloadedmetadata = () => resolve(); });
+        await livePreview.play();
+
+        startPrompt.classList.add('hidden');
+        analysisLayer.classList.add('hidden');
+        recordingLayer.classList.remove('hidden');
+
+        btnStartCamera.classList.add('hidden');
+        cameraSelect.classList.add('hidden');
+        btnRecord.classList.remove('hidden');
+        cameraStatus.innerText = "Active";
+      } catch (err) {
+        console.error("Camera Error:", err);
+        if (err.name === "NotAllowedError") alert("Camera permission denied. Allow camera in site settings.");
+        else if (err.name === "NotFoundError") alert("No camera found on this device.");
+        else if (err.name === "NotReadableError") alert("Camera is being used by another app (Zoom/Teams/OBS). Close it.");
+        else alert("Could not start camera.\nError: " + err.message);
+        cameraStatus.innerText = "Error";
+      }
+    }
+
+    function stopCamera() {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+      }
+      livePreview.srcObject = null;
+    }
+
+    function toggleRecording() {
+      if (!cameraStream || cameraStream.getVideoTracks().length === 0) {
+        alert("Camera is not active. Click Activate first.");
+        return;
+      }
+
+      if (!isRecording) {
+        recordedChunks = [];
+        try { mediaRecorder = new MediaRecorder(cameraStream); }
+        catch (e) { alert("Browser not supported for recording."); return; }
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) recordedChunks.push(event.data);
+        };
+        mediaRecorder.onstop = () => completeRecording();
+
+        mediaRecorder.start();
+        isRecording = true;
+
+        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-sm"></div><span>End Workout</span>`;
+        btnRecord.classList.remove('bg-red-600');
+        btnRecord.classList.add('bg-gray-600');
+        recordingIndicator.classList.remove('hidden');
+        recordingLayer.classList.add('recording-pulse');
+        cameraStatus.innerText = "Recording...";
+      } else {
+        mediaRecorder.stop();
+        isRecording = false;
+
+        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-full"></div><span>Start Recording</span>`;
+        btnRecord.classList.remove('bg-gray-600');
+        btnRecord.classList.add('bg-red-600');
+        recordingIndicator.classList.add('hidden');
+        recordingLayer.classList.remove('recording-pulse');
+        cameraStatus.innerText = "Processing...";
+      }
+    }
+
+    function completeRecording() {
+      if (recordedChunks.length === 0) {
+        alert("Recording failed: No data captured.");
+        stopCamera();
+        setMode('camera');
+        return;
+      }
+
+      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      activeBlobUrl = url;
+
+      stopCamera();
+      recordingLayer.classList.add('hidden');
+      analysisLayer.classList.remove('hidden');
+
+      prepareVideoForMobile(playbackVideo);
+      playbackVideo.src = url;
+      playbackVideo.muted = true;
+      resetAll(true);
+      startPrompt.classList.add('hidden');
+
+      playbackVideo.onloadedmetadata = async () => {
+        // Fit canvas to displayed size (mobile-safe)
+        fitCanvasToContainer();
+        lastPlaybackTime = 0;
+
+        updateTimeUI();
+        updatePlayPauseUI();
+        renderFrame();
+
+        try { await playbackVideo.play(); } catch (e) {}
+        await startProcessing();
+      };
+
+      playbackVideo.onended = () => {
+        processingActive = false;
+        replayOverlay.classList.remove('hidden');
+        updatePlayPauseUI();
+      };
+    }
+
+    // ---------------------------
+    // REPLAY (KEEP annotations!)
+    // ---------------------------
+    async function replayVideo() {
+      resetAnalysisOnly();
+      playbackVideo.currentTime = 0;
+      lastPlaybackTime = 0;
+
+      replayOverlay.classList.add('hidden');
+      try {
+        await playbackVideo.play();
+        processingActive = true;
+        updatePlayPauseUI();
+        requestAnimationFrame(processLoop);
+      } catch (e) {
+        console.error("Replay blocked:", e);
+      }
+    }
+
+    // ---------------------------
+    // INIT AI
     // ---------------------------
     async function initAI() {
       loader.classList.remove('hidden');
 
-      // If Pose script didn't load, fail gracefully
       if (typeof Pose === "undefined") {
         loader.classList.add('hidden');
         alert("MediaPipe Pose failed to load. Check your internet / CDN access.");
-        console.error("Pose is undefined. CDN might be blocked.");
         return;
       }
 
@@ -744,31 +2108,46 @@
       });
       pose.onResults(onResults);
 
-      // Some versions don't require initialize(), but keep safe
-      try {
-        if (pose.initialize) await pose.initialize();
-      } catch (e) {
-        console.warn("pose.initialize failed (can be ok depending on version):", e);
-      }
+      try { if (pose.initialize) await pose.initialize(); } catch {}
 
       loader.classList.add('hidden');
 
-      // Populate cameras
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         await getCameras();
-      } else {
-        console.warn("mediaDevices not available.");
       }
     }
 
     // ---------------------------
-    // EVENTS (no inline onclick)
+    // EVENTS
     // ---------------------------
     btnModeUpload.addEventListener("click", () => setMode("upload"));
     btnModeCamera.addEventListener("click", () => setMode("camera"));
     btnStartCamera.addEventListener("click", startCamera);
     btnRecord.addEventListener("click", toggleRecording);
     btnReplay.addEventListener("click", replayVideo);
+
+    btnDownloadReport.addEventListener("click", () => {
+      const report = buildSessionReport();
+      downloadJson(`${report.sessionId}_${report.exerciseType}.json`, report);
+    });
+
+    btnResetSession.addEventListener("click", () => {
+      safePauseVideo();
+      resetAll(true);
+      populateReportUI(buildSessionReport());
+      renderAnnoList();
+      updateTimeUI();
+      updatePlayPauseUI();
+      renderFrame();
+    });
+
+    btnDownloadPDF.addEventListener("click", async () => {
+      try { await downloadPdfReport(); }
+      catch (e) {
+        console.error("PDF export failed:", e);
+        alert("PDF export failed. Check console: " + (e?.message || e));
+      }
+    });
 
     upload.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -778,36 +2157,149 @@
       startPrompt.classList.add('hidden');
 
       const url = URL.createObjectURL(file);
+      activeBlobUrl = url;
+
+      prepareVideoForMobile(playbackVideo);
       playbackVideo.src = url;
       playbackVideo.muted = true;
-      resetStats();
+      resetAll(true);
 
       playbackVideo.onloadedmetadata = async () => {
-        canvas.width = playbackVideo.videoWidth;
-        canvas.height = playbackVideo.videoHeight;
+        fitCanvasToContainer();
+        lastPlaybackTime = 0;
+
+        updateTimeUI();
+        updatePlayPauseUI();
+        renderFrame();
 
         try {
+          // On mobile, play must come from gesture; if blocked, user can press Play button
           await playbackVideo.play();
-          processVideo();
+          await startProcessing();
+          updatePlayPauseUI();
         } catch (err) {
           console.error("Video play blocked:", err);
-          alert("Browser blocked autoplay. Click anywhere once, then press Replay.");
+          safePauseVideo();
+          renderFrame();
+          updatePlayPauseUI();
+          alert("Autoplay blocked (normal on phones). Tap Play to start.");
         }
       };
 
-      playbackVideo.onended = () => replayOverlay.classList.remove('hidden');
+      playbackVideo.onended = () => {
+        processingActive = false;
+        replayOverlay.classList.remove('hidden');
+        updatePlayPauseUI();
+      };
     });
 
-    // Boot safely AFTER everything is defined
-    window.addEventListener("load", async () => {
-      try {
-        await initAI();
-      } catch (e) {
-        console.error("initAI failed:", e);
-        alert("AI init failed. Check console for details: " + (e?.message || e));
+    // Annotation buttons
+    btnAnnotate.addEventListener("click", () => enterAnnotateMode());
+    btnClearDrawing.addEventListener("click", () => {
+      if (!annotateMode) return alert("Click Annotate Frame first (or press A).");
+      clearDrawing();
+    });
+    btnSaveAnnotation.addEventListener("click", () => saveAnnotation());
+    btnExitAnnotate.addEventListener("click", () => exitAnnotateMode(false));
+
+    // prevent phantom reps on backwards seeks
+    playbackVideo.addEventListener("timeupdate", () => {
+      const t = playbackVideo.currentTime || 0;
+
+      if (t + SEEK_RESET_EPS < lastPlaybackTime) {
+        stage = "up";
+        currentRepMinAngle = 360;
+        repStartTime = t;
       }
-      // Default mode
+      lastPlaybackTime = t;
+
+      updateTimeUI();
+      if (annotateMode) {
+        currentAnnoTime = t;
+        annoTimeEl.innerText = formatTime(currentAnnoTime);
+      }
+      renderFrame();
+    });
+
+    playbackVideo.addEventListener("seeked", () => {
+      stage = "up";
+      currentRepMinAngle = 360;
+      repStartTime = playbackVideo.currentTime || 0;
+      lastPlaybackTime = playbackVideo.currentTime || 0;
+
+      updateTimeUI();
+      renderFrame();
+    });
+
+    playbackVideo.addEventListener("play", () => {
+      if (annotateMode) exitAnnotateMode(true);
+      processingActive = true;
+      updatePlayPauseUI();
+      requestAnimationFrame(processLoop);
+    });
+
+    playbackVideo.addEventListener("pause", () => {
+      processingActive = false;
+      updatePlayPauseUI();
+      renderFrame();
+    });
+
+    // Keyboard shortcuts (desktop)
+    window.addEventListener("keydown", async (e) => {
+      const tag = (document.activeElement && document.activeElement.tagName) ? document.activeElement.tagName.toLowerCase() : "";
+      if (tag === "textarea" || tag === "input" || tag === "select") return;
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        await togglePlayPause();
+      } else if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        enterAnnotateMode();
+      } else if (e.key === "Escape") {
+        if (annotateMode) {
+          e.preventDefault();
+          exitAnnotateMode(false);
+        }
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        stepBy(-0.25);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        stepBy(+0.25);
+      }
+    });
+
+    // Responsive canvas resize
+    window.addEventListener("resize", () => {
+      fitCanvasToContainer();
+      renderFrame();
+    });
+    window.addEventListener("orientationchange", () => {
+      setTimeout(() => {
+        fitCanvasToContainer();
+        renderFrame();
+      }, 250);
+    });
+
+    // ---------------------------
+    // BOOT
+    // ---------------------------
+    window.addEventListener("load", async () => {
+      rebuildControlsUI();
+
+      try { await initAI(); }
+      catch (e) { console.error("initAI failed:", e); alert("AI init failed: " + (e?.message || e)); }
+
       setMode("upload");
+      populateReportUI(buildSessionReport());
+      renderAnnoList();
+      setCanvasCursor();
+      updateTimeUI();
+      updatePlayPauseUI();
+      if (btnSpeed) btnSpeed.textContent = `${SPEEDS[speedIndex].toFixed(1)}×`;
+
+      // If video not loaded yet, fitCanvas will no-op; after load metadata it fits
+      fitCanvasToContainer();
     });
   </script>
 </body>
