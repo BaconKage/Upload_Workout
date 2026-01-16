@@ -37,6 +37,15 @@
       touch-action: none;
     }
 
+    /* ✅ Bigger camera preview on phones (when camera mode is active) */
+    .canvas-wrapper.camera-big {
+      aspect-ratio: auto;
+      min-height: 72vh;
+    }
+    @media (max-width: 640px) and (orientation: portrait) {
+      .canvas-wrapper.camera-big { min-height: 78vh; }
+    }
+
     .layer { position: absolute; inset: 0; width: 100%; height: 100%; }
 
     #recordingLayer { z-index: 20; background: #000; }
@@ -191,19 +200,20 @@
       display: block;
     }
 
-    /* ✅ Mobile: controls should NOT cover the video */
+    /* ✅ Mobile */
     @media (max-width: 640px) {
-      #controlsOverlay {
-        left: 8px;
-        right: 8px;
-        bottom: 8px;
-        padding: 8px 10px;
-      }
+      body { padding: 14px !important; }
+      #controlsOverlay { left: 8px; right: 8px; bottom: 8px; padding: 8px 10px; }
       #controlsOverlay .row { gap: 8px; }
       #controlsOverlay button { padding: 7px 9px; font-size: 11px; }
       #controlsOverlay .meta { font-size: 10px; white-space: normal; }
       #annotationOverlay { bottom: 64px; max-width: 92%; }
     }
+
+    /* Collapsible panel animation */
+    .collapse-body { overflow: hidden; transition: max-height .25s ease, opacity .2s ease; }
+    .collapsed .collapse-body { max-height: 0px; opacity: 0; pointer-events: none; }
+    .expanded .collapse-body { max-height: 2000px; opacity: 1; pointer-events: auto; }
   </style>
 </head>
 
@@ -211,17 +221,17 @@
   <div class="max-w-5xl mx-auto space-y-6">
 
     <div class="flex justify-between items-center border-b border-gray-700 pb-4">
-      <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-green-400">
+      <h1 class="text-2xl sm:text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-green-400">
         AI Form Validator
       </h1>
       <div class="flex gap-2 bg-gray-800 p-1 rounded-lg">
         <button id="btnModeUpload"
                 class="px-4 py-1.5 rounded text-sm font-medium transition-colors bg-blue-600 text-white shadow-sm">
-          Upload File
+          Upload
         </button>
         <button id="btnModeCamera"
                 class="px-4 py-1.5 rounded text-sm font-medium transition-colors text-gray-400 hover:text-white">
-          Live Record
+          Camera
         </button>
       </div>
     </div>
@@ -238,21 +248,21 @@
       </div>
 
       <div id="uploadUI" class="bg-gray-800 p-4 rounded-lg border border-gray-700 col-span-2 shadow-sm">
-        <label class="block text-gray-400 text-xs uppercase tracking-wider font-semibold mb-2">Video File</label>
+        <label class="block text-gray-400 text-xs uppercase tracking-wider font-semibold mb-2">Video</label>
         <input type="file" id="videoUpload" accept="video/*"
                class="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer"/>
       </div>
 
       <div id="cameraUI" class="bg-gray-800 p-4 rounded-lg border border-gray-700 col-span-2 hidden flex flex-col justify-center shadow-sm gap-2">
         <div class="flex justify-between items-center">
-          <label class="block text-gray-400 text-xs uppercase tracking-wider font-semibold">Camera Source</label>
+          <label class="block text-gray-400 text-xs uppercase tracking-wider font-semibold">Camera</label>
           <span id="cameraStatus" class="text-xs text-gray-400">Ready</span>
         </div>
 
         <div class="flex gap-3 flex-wrap">
           <select id="cameraSelect"
                   class="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none flex-grow min-w-[180px]">
-            <option value="">Default Camera</option>
+            <option value="">Default</option>
           </select>
 
           <button id="btnStartCamera"
@@ -262,7 +272,13 @@
 
           <button id="btnRecord"
                   class="hidden flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2 rounded-lg font-semibold text-sm shadow-lg whitespace-nowrap w-full justify-center">
-            <div class="w-2.5 h-2.5 bg-white rounded-full"></div><span>Start Recording</span>
+            <div class="w-2.5 h-2.5 bg-white rounded-full"></div><span>Record</span>
+          </button>
+
+          <!-- ✅ Download recorded video -->
+          <button id="btnDownloadVideo"
+                  class="hidden bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-semibold text-sm shadow-lg whitespace-nowrap">
+            Download Recording
           </button>
         </div>
       </div>
@@ -273,14 +289,13 @@
         <video id="playbackVideo" playsinline muted></video>
         <canvas id="outputCanvas"></canvas>
 
-        <div id="annoModeBadge">ANNOTATE MODE • Draw on frame • ESC to exit</div>
+        <div id="annoModeBadge">ANNOTATE</div>
 
         <div id="annotationOverlay">
-          <div class="title" id="annotationOverlayTitle">Annotation</div>
+          <div class="title" id="annotationOverlayTitle">Note</div>
           <div class="body" id="annotationOverlayBody">—</div>
         </div>
 
-        <!-- ✅ Floating Controls button (phone) -->
         <button id="btnFloatControls"
           class="hidden absolute top-4 right-4 z-[96] bg-black/60 text-white text-xs font-bold px-3 py-2 rounded-full border border-white/10 backdrop-blur">
           Controls
@@ -300,25 +315,20 @@
 
       <div id="loader" class="absolute inset-0 bg-gray-900/90 flex flex-col items-center justify-center hidden z-50">
         <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p class="text-blue-400 font-mono animate-pulse">Initializing AI Model...</p>
+        <p class="text-blue-400 font-mono animate-pulse">Loading…</p>
       </div>
 
       <div id="startPrompt" class="absolute inset-0 flex items-center justify-center bg-gray-900 z-40 pointer-events-none">
         <div class="text-center text-gray-500">
-          <svg class="w-16 h-16 mx-auto mb-4 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-              d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-          </svg>
-          <p class="text-lg font-medium">Ready to Analyze</p>
-          <p class="text-sm opacity-60">Upload a video or use Live Record</p>
-          <p class="text-xs mt-3 opacity-60">Tip: run on <b>http://localhost</b> or <b>https</b> for camera.</p>
+          <p class="text-lg font-medium">Ready</p>
+          <p class="text-sm opacity-60">Upload or use Camera</p>
         </div>
       </div>
 
       <div id="replayOverlay" class="absolute inset-0 bg-black/70 flex items-center justify-center z-50 hidden backdrop-blur-sm">
         <button id="btnReplay"
                 class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full flex items-center gap-2 transition transform hover:scale-105 shadow-xl">
-          Replay Analysis
+          Replay
         </button>
       </div>
     </div>
@@ -326,116 +336,117 @@
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
       <div class="md:col-span-2 grid grid-cols-3 gap-4">
         <div class="bg-gray-800 p-4 rounded-lg text-center border border-gray-700 shadow-sm">
-          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Reps Completed</p>
+          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Reps</p>
           <p id="repCount" class="text-5xl font-bold text-white mt-1">0</p>
         </div>
         <div class="bg-gray-800 p-4 rounded-lg text-center border border-gray-700 shadow-sm">
-          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Current Angle</p>
+          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Angle</p>
           <p id="currentAngle" class="text-5xl font-bold text-blue-400 mt-1">--°</p>
         </div>
         <div class="bg-gray-800 p-4 rounded-lg text-center border border-gray-700 shadow-sm">
-          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Feedback</p>
+          <p class="text-gray-400 text-[10px] uppercase tracking-widest font-bold">Status</p>
           <p id="feedback" class="text-xl font-bold text-gray-500 mt-2">IDLE</p>
           <p id="trackingSide" class="text-[10px] text-gray-500 mt-1">--</p>
         </div>
       </div>
 
       <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col max-h-[250px] shadow-sm">
-        <div class="bg-gray-850 p-3 border-b border-gray-700 flex justify-between items-center">
-          <h3 class="text-xs font-bold text-gray-300 uppercase tracking-wider">Rep History</h3>
+        <div class="p-3 border-b border-gray-700 flex justify-between items-center">
+          <h3 class="text-xs font-bold text-gray-300 uppercase tracking-wider">History</h3>
         </div>
         <div id="historyList" class="p-2 overflow-y-auto flex-1 space-y-2">
-          <p class="text-gray-500 text-sm text-center italic py-8 opacity-50">Complete a rep to see details</p>
+          <p class="text-gray-500 text-sm text-center italic py-8 opacity-50">No reps yet</p>
         </div>
       </div>
     </div>
 
-    <!-- Trainer Annotations panel -->
-    <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 shadow-sm space-y-3">
-      <div class="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <div class="text-sm font-bold text-gray-200 uppercase tracking-wider">Trainer Annotations (Draw + Text)</div>
-          <div class="text-xs text-gray-400 mt-1">Pause → Annotate Frame → Draw → Save. (Shortcut: <b>A</b> to annotate, <b>ESC</b> to exit)</div>
+    <!-- ✅ Collapsible Trainer Annotations -->
+    <div id="annoPanel" class="bg-gray-800 border border-gray-700 rounded-lg shadow-sm expanded">
+      <button id="btnAnnoPanelToggle"
+        class="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg">
+        <div class="text-sm font-bold text-gray-200 uppercase tracking-wider">Annotations</div>
+        <div class="flex items-center gap-2">
+          <div id="annoPanelMini"
+               class="text-[11px] text-gray-400 hidden sm:block">
+            A = annotate • ESC = exit
+          </div>
+          <span id="annoPanelChevron" class="text-gray-300 font-black text-lg">▾</span>
         </div>
-        <div class="flex gap-2 flex-wrap">
-          <button id="btnAnnotate"
-            class="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
-            Annotate Frame
-          </button>
-          <button id="btnClearDrawing"
-            class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
-            Clear Drawing
-          </button>
-          <button id="btnSaveAnnotation"
-            class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
-            Save Annotation (adds screenshot to report)
-          </button>
-          <button id="btnExitAnnotate"
-            class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
-            Exit
-          </button>
-        </div>
-      </div>
+      </button>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div class="bg-gray-900 border border-gray-700 rounded-lg p-3">
-          <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Timestamp</div>
-          <div id="annoTime" class="text-lg font-bold text-white mt-1">--</div>
-          <div class="text-xs text-gray-400 mt-1">Auto from current video time</div>
+      <div class="collapse-body px-4 pb-4">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <div class="text-xs text-gray-400">Pause → Annotate → Draw → Save</div>
+          <div class="flex gap-2 flex-wrap">
+            <button id="btnAnnotate"
+              class="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+              Annotate
+            </button>
+            <button id="btnClearDrawing"
+              class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+              Clear
+            </button>
+            <button id="btnSaveAnnotation"
+              class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+              Save
+            </button>
+            <button id="btnExitAnnotate"
+              class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
+              Exit
+            </button>
+          </div>
         </div>
 
-        <div class="md:col-span-2 bg-gray-900 border border-gray-700 rounded-lg p-3">
-          <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Annotation Text</div>
-          <textarea id="annoText" rows="2"
-            class="mt-2 w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-white outline-none focus:ring-2 focus:ring-purple-500"
-            placeholder="Example: Rep 4 — knee collapses inward, cue knees out."></textarea>
-          <div class="text-[11px] text-gray-400 mt-1">
-            Tip: keep it short. This will appear on the video at this timestamp.
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+          <div class="bg-gray-900 border border-gray-700 rounded-lg p-3">
+            <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Time</div>
+            <div id="annoTime" class="text-lg font-bold text-white mt-1">--</div>
+          </div>
+
+          <div class="md:col-span-2 bg-gray-900 border border-gray-700 rounded-lg p-3">
+            <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Note</div>
+            <textarea id="annoText" rows="2"
+              class="mt-2 w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-white outline-none focus:ring-2 focus:ring-purple-500"
+              placeholder="e.g., knees cave in — cue knees out"></textarea>
+          </div>
+        </div>
+
+        <div class="bg-gray-900 border border-gray-700 rounded-lg p-3 mt-3">
+          <div class="flex items-center justify-between">
+            <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Saved</div>
+            <div class="text-[11px] text-gray-400">Jump / Delete</div>
+          </div>
+          <div id="annoList" class="mt-2 space-y-2">
+            <div class="text-sm text-gray-500 italic">No annotations yet.</div>
           </div>
         </div>
       </div>
-
-      <div class="bg-gray-900 border border-gray-700 rounded-lg p-3">
-        <div class="flex items-center justify-between">
-          <div class="text-xs font-bold text-gray-300 uppercase tracking-wider">Saved Annotations</div>
-          <div class="text-[11px] text-gray-400">Click Jump to go there</div>
-        </div>
-        <div id="annoList" class="mt-2 space-y-2">
-          <div class="text-sm text-gray-500 italic">No annotations yet.</div>
-        </div>
-      </div>
-
-      <div class="text-[11px] text-gray-400">
-        Privacy + cost: we store only <b>timestamp + drawing strokes + note text + a screenshot of the annotated frame</b>, not the full video.
-      </div>
     </div>
 
-    <!-- JSON report + reset -->
-    <div class="flex justify-end mt-2 gap-2">
+    <div class="flex justify-end mt-2 gap-2 flex-wrap">
       <button id="btnDownloadReport"
         class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
-        Download Report (JSON)
+        JSON
       </button>
       <button id="btnResetSession"
         class="bg-gray-700 hover:bg-gray-600 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
-        Reset Session (clears reps + annotations)
+        Reset
       </button>
     </div>
 
-    <!-- Trainer-friendly PDF report -->
     <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 shadow-sm">
       <div class="flex items-center justify-between">
-        <h3 class="text-sm font-bold text-gray-200 uppercase tracking-wider">Trainer Report</h3>
+        <h3 class="text-sm font-bold text-gray-200 uppercase tracking-wider">Report</h3>
         <button id="btnDownloadPDF"
           class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg text-sm shadow">
-          Download PDF
+          PDF
         </button>
       </div>
 
       <div id="reportArea" class="mt-4 bg-white text-gray-900 border border-gray-300 rounded-lg p-4">
         <div class="flex justify-between items-start gap-4">
           <div>
-            <div class="text-lg font-bold text-gray-900">AI Workout Report</div>
+            <div class="text-lg font-bold text-gray-900">Workout Report</div>
             <div id="reportMeta" class="text-xs text-gray-600 mt-1">No session yet</div>
           </div>
           <div class="text-right">
@@ -446,62 +457,58 @@
 
         <div class="grid grid-cols-3 gap-3 mt-4">
           <div class="bg-gray-100 border border-gray-200 rounded p-3 text-center">
-            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Overall Score</div>
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Score</div>
             <div id="reportOverallScore" class="text-2xl font-bold text-gray-900">--</div>
             <div id="reportVerdict" class="text-[11px] mt-1 text-gray-600">--</div>
           </div>
           <div class="bg-gray-100 border border-gray-200 rounded p-3 text-center">
-            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Stability Score</div>
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Stability</div>
             <div id="reportStabilityScore" class="text-2xl font-bold text-gray-900">--</div>
-            <div class="text-[11px] mt-1 text-gray-600">Consistency of reps</div>
           </div>
           <div class="bg-gray-100 border border-gray-200 rounded p-3 text-center">
-            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Good Rep %</div>
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Good %</div>
             <div id="reportGoodPct" class="text-2xl font-bold text-gray-900">--</div>
-            <div class="text-[11px] mt-1 text-gray-600">Quality ratio</div>
           </div>
         </div>
 
         <div class="grid grid-cols-3 gap-3 mt-3">
           <div class="bg-gray-50 border border-gray-200 rounded p-3 text-center">
-            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Total Reps</div>
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Total</div>
             <div id="reportTotalReps" class="text-2xl font-bold text-gray-900">0</div>
           </div>
           <div class="bg-gray-50 border border-gray-200 rounded p-3 text-center">
-            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Good Reps</div>
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Good</div>
             <div id="reportGoodReps" class="text-2xl font-bold text-gray-900">0</div>
           </div>
           <div class="bg-gray-50 border border-gray-200 rounded p-3 text-center">
-            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Bad Reps</div>
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Bad</div>
             <div id="reportBadReps" class="text-2xl font-bold text-gray-900">0</div>
           </div>
         </div>
 
         <div class="grid grid-cols-2 gap-3 mt-3">
           <div class="bg-gray-50 border border-gray-200 rounded p-3">
-            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Average Min Angle</div>
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Avg Min Angle</div>
             <div id="reportAvgMinAngle" class="text-xl font-bold text-gray-900">--</div>
-            <div class="text-[11px] text-gray-600">Lower usually means deeper (depends on exercise)</div>
           </div>
           <div class="bg-gray-50 border border-gray-200 rounded p-3">
-            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Rep-to-Rep Variation</div>
+            <div class="text-[10px] uppercase tracking-widest text-gray-600 font-bold">Variation</div>
             <div id="reportStdMinAngle" class="text-xl font-bold text-gray-900">--</div>
-            <div class="text-[11px] text-gray-600">Lower variation = more stable</div>
           </div>
         </div>
 
         <div class="mt-4">
-          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Top Issues Detected</div>
+          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Top Issues</div>
           <div id="reportFaults" class="text-sm text-gray-800">No data</div>
         </div>
 
         <div class="mt-4">
-          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Notes (Auto)</div>
+          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Notes</div>
           <div id="reportNotesAuto" class="text-sm text-gray-800">No notes yet.</div>
         </div>
 
         <div class="mt-4">
-          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Trainer Annotations (with screenshots)</div>
+          <div class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">Annotations</div>
           <div id="reportAnnotations" class="text-sm text-gray-800">No annotations.</div>
         </div>
 
@@ -525,7 +532,7 @@
         </div>
 
         <div class="mt-4 text-[11px] text-gray-600">
-          Note: This report stores only metrics + trainer annotations (timestamps + drawings + text + screenshots). No full video is stored.
+          Stored: metrics + notes + annotation screenshots (not full video).
         </div>
       </div>
     </div>
@@ -599,6 +606,14 @@
     const controlsOverlay = document.getElementById("controlsOverlay");
     const btnFloatControls = document.getElementById("btnFloatControls");
 
+    // Collapsible annotations panel
+    const annoPanel = document.getElementById("annoPanel");
+    const btnAnnoPanelToggle = document.getElementById("btnAnnoPanelToggle");
+    const annoPanelChevron = document.getElementById("annoPanelChevron");
+
+    // Download recorded video
+    const btnDownloadVideo = document.getElementById("btnDownloadVideo");
+
     // Controls refs (rebuilt dynamically)
     let btnPlayPause = null;
     let btnStepBack = null;
@@ -652,6 +667,10 @@
 
     // revoke blob urls to avoid memory leaks on mobile
     let activeBlobUrl = null;
+
+    // track downloadable recording url
+    let lastRecordingUrl = null;
+    let lastRecordingMime = "video/webm";
 
     const CONFIG = {
       squat:  { upThreshold: 160, downThreshold: 105, goodRepLimit: 120 },
@@ -789,7 +808,7 @@
       document.getElementById('currentAngle').innerText = "--°";
       document.getElementById('feedback').innerText = "IDLE";
       document.getElementById('trackingSide').innerText = "--";
-      historyList.innerHTML = '<p class="text-gray-500 text-sm text-center italic py-8 opacity-50">Complete a rep to see details</p>';
+      historyList.innerHTML = '<p class="text-gray-500 text-sm text-center italic py-8 opacity-50">No reps yet</p>';
       replayOverlay.classList.add('hidden');
 
       populateReportUI(buildSessionReport());
@@ -823,7 +842,7 @@
       document.getElementById('currentAngle').innerText = "--°";
       document.getElementById('feedback').innerText = "IDLE";
       document.getElementById('trackingSide').innerText = "--";
-      historyList.innerHTML = '<p class="text-gray-500 text-sm text-center italic py-8 opacity-50">Complete a rep to see details</p>';
+      historyList.innerHTML = '<p class="text-gray-500 text-sm text-center italic py-8 opacity-50">No reps yet</p>';
       replayOverlay.classList.add('hidden');
 
       populateReportUI(buildSessionReport());
@@ -846,16 +865,34 @@
       div.innerHTML = `
         <div>
           <span class="font-bold text-sm">Rep ${repNum}</span>
-          <span class="text-xs text-gray-400 ml-2">at ${formatTime(timestamp)}</span>
+          <span class="text-xs text-gray-400 ml-2">${formatTime(timestamp)}</span>
         </div>
         <div class="text-right">
           <div class="${color} font-semibold text-sm">${status}</div>
-          <div class="text-xs text-gray-500">${Math.round(angle)}° flex</div>
+          <div class="text-xs text-gray-500">${Math.round(angle)}°</div>
         </div>
       `;
       historyList.insertBefore(div, historyList.firstChild);
       historyData.push({ repNum, status, angle, timestamp });
     }
+
+    // ---------------------------
+    // ANNOTATIONS PANEL COLLAPSE
+    // ---------------------------
+    function setAnnoPanelExpanded(expanded) {
+      annoPanel.classList.toggle("expanded", expanded);
+      annoPanel.classList.toggle("collapsed", !expanded);
+      annoPanelChevron.textContent = expanded ? "▾" : "▸";
+    }
+    // default: expanded on desktop, collapsed on phone
+    function applyAnnoPanelPolicy() {
+      if (isPhoneLayout()) setAnnoPanelExpanded(false);
+      else setAnnoPanelExpanded(true);
+    }
+    btnAnnoPanelToggle.addEventListener("click", () => {
+      const expanded = annoPanel.classList.contains("expanded");
+      setAnnoPanelExpanded(!expanded);
+    });
 
     // ---------------------------
     // CONTROLS (minimize policy)
@@ -873,13 +910,10 @@
 
     function applyResponsiveControlsPolicy() {
       if (isPhoneLayout()) {
-        // On phones: prefer minimized always
         minimizeControls();
         showFloatingControlsButton(true);
       } else {
-        // On desktop: floating button hidden
         showFloatingControlsButton(false);
-        // restore overlay display if it was hidden during annotate on phone
         controlsOverlay.style.display = "";
       }
     }
@@ -982,10 +1016,7 @@
     }
 
     function enterAnnotateMode() {
-      if (!playbackVideo.src) {
-        alert("Upload/record a video first.");
-        return;
-      }
+      if (!playbackVideo.src) { alert("Upload/record a video first."); return; }
       if (!playbackVideo.paused) safePauseVideo();
 
       annotateMode = true;
@@ -996,10 +1027,11 @@
       currentStroke = null;
       isDrawing = false;
 
-      // ✅ On phone: hide big overlay so it doesn't cover the frame
+      // On phone: reduce overlays while drawing
       if (isPhoneLayout()) {
         controlsOverlay.style.display = "none";
         showFloatingControlsButton(true);
+        setAnnoPanelExpanded(false);
       }
 
       setCanvasCursor();
@@ -1017,7 +1049,6 @@
       if (!silent) annoTextEl.value = "";
       setCanvasCursor();
 
-      // ✅ restore overlay after annotate
       controlsOverlay.style.display = "";
       if (isPhoneLayout()) {
         minimizeControls();
@@ -1100,12 +1131,12 @@
     }
 
     async function saveAnnotation() {
-      if (!annotateMode) return alert("Click Annotate Frame first (or press A).");
+      if (!annotateMode) return alert("Tap Annotate first.");
       const text = (annoTextEl.value || "").trim();
-      if (!text) return alert("Please enter annotation text.");
+      if (!text) return alert("Add a note.");
 
       if (currentStrokes.length === 0) {
-        const ok = confirm("No drawing found. Save text-only annotation?");
+        const ok = confirm("Save without drawing?");
         if (!ok) return;
       }
 
@@ -1126,7 +1157,7 @@
 
       annoTextEl.value = "";
       clearDrawing();
-      alert("Annotation saved (with screenshot)!");
+      alert("Saved.");
     }
 
     function renderAnnoList() {
@@ -1139,7 +1170,7 @@
         const safe = escapeHtml(a.text);
         const thumb = a.imageDataUrl
           ? `<img src="${a.imageDataUrl}" alt="anno" style="margin-top:8px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);max-width:260px;width:100%;display:block;">`
-          : `<div style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.6);">No screenshot</div>`;
+          : ``;
         return `
           <div class="bg-gray-950 border border-gray-700 rounded-lg p-3">
             <div class="flex items-start justify-between gap-3">
@@ -1149,7 +1180,7 @@
               </div>
               <div class="flex gap-2">
                 <button data-jump="${a.id}" class="px-3 py-1.5 text-xs rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold">Jump</button>
-                <button data-del="${a.id}" class="px-3 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white font-semibold">Delete</button>
+                <button data-del="${a.id}" class="px-3 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white font-semibold">Del</button>
               </div>
             </div>
             ${thumb}
@@ -1186,19 +1217,13 @@
       let bestDt = 999;
       for (const a of annotations) {
         const dt = Math.abs(t - a.timeSec);
-        if (dt <= ANNO_WINDOW_SEC && dt < bestDt) {
-          best = a;
-          bestDt = dt;
-        }
+        if (dt <= ANNO_WINDOW_SEC && dt < bestDt) { best = a; bestDt = dt; }
       }
       return best;
     }
 
     function showAnnotationOverlay(ann) {
-      if (!ann) {
-        annotationOverlay.style.display = "none";
-        return;
-      }
+      if (!ann) { annotationOverlay.style.display = "none"; return; }
       annotationOverlayBody.innerText = ann.text;
       annotationOverlay.style.display = "block";
     }
@@ -1250,7 +1275,6 @@
     // ---------------------------
     // DRAWING EVENTS + STOP BUBBLE
     // ---------------------------
-    // ✅ prevent canvas interactions from toggling play/pause via container click
     canvas.addEventListener("click", (e) => { if (annotateMode) e.stopPropagation(); });
 
     canvas.addEventListener("pointerdown", (e) => {
@@ -1323,23 +1347,23 @@
       const notes = [];
       const type = report.exerciseType;
       const top = (report.topFaults || []).slice(0, 3);
-      if (top.length > 0) notes.push(`Main flags: ${top.map(x => x.fault).join(", ")}.`);
-      else notes.push("No major flags detected by the system.");
+      if (top.length > 0) notes.push(`Main: ${top.map(x => x.fault).join(", ")}.`);
+      else notes.push("No major flags detected.");
 
       const goodPct = report.scores?.goodRepPct ?? 0;
       const stability = report.scores?.stabilityScore ?? 0;
 
-      if (goodPct < 60) notes.push("Quality is low — coach should focus on range/targets first.");
+      if (goodPct < 60) notes.push("Low quality — focus range/targets.");
       else if (goodPct < 85) notes.push("Decent — refine depth + tempo.");
-      else notes.push("Strong session — progress load/tempo.");
+      else notes.push("Strong — progress load/tempo.");
 
-      if (stability < 60) notes.push("Inconsistent reps — cue slower, repeatable range.");
-      else if (stability < 80) notes.push("Moderate consistency — aim smoother control.");
-      else notes.push("Very consistent — great control.");
+      if (stability < 60) notes.push("Inconsistent — slow down, repeatable range.");
+      else if (stability < 80) notes.push("Moderate — aim smoother control.");
+      else notes.push("Very consistent.");
 
-      if (type === "squat") notes.push("Squat cue: chest up, knees track, consistent depth.");
-      if (type === "pushup") notes.push("Push-up cue: strong plank line, avoid hip sag.");
-      if (type === "curl") notes.push("Curl cue: elbows pinned, avoid torso swing.");
+      if (type === "squat") notes.push("Cue: chest up, knees track.");
+      if (type === "pushup") notes.push("Cue: solid plank line.");
+      if (type === "curl") notes.push("Cue: elbows pinned, no swing.");
 
       return notes;
     }
@@ -1352,10 +1376,10 @@
       const overall = clamp((0.5 * goodRepPct) + (0.3 * stabilityScore) + (0.2 * depthScore), 0, 100);
 
       let verdict = "Keep training";
-      if (overall >= 85) verdict = "Excellent session";
-      else if (overall >= 70) verdict = "Good — refine form";
-      else if (overall >= 50) verdict = "Needs coaching focus";
-      else verdict = "High correction needed";
+      if (overall >= 85) verdict = "Excellent";
+      else if (overall >= 70) verdict = "Good";
+      else if (overall >= 50) verdict = "Needs focus";
+      else verdict = "High correction";
 
       return { goodRepPct: round1(goodRepPct), stabilityScore: round1(stabilityScore), depthScore: round1(depthScore), overallScore: round1(overall), verdict };
     }
@@ -1400,7 +1424,7 @@
     }
 
     function populateReportUI(report) {
-      reportMeta.innerText = `Session: ${report.sessionId || "--"} • ${new Date(report.createdAt || Date.now()).toLocaleString()}`;
+      reportMeta.innerText = `Session ${report.sessionId || "--"} • ${new Date(report.createdAt || Date.now()).toLocaleString()}`;
       reportExercise.innerText = (report.exerciseType || "--").toUpperCase();
 
       reportTotalReps.innerText = report.totals?.totalReps ?? 0;
@@ -1416,7 +1440,7 @@
       reportStdMinAngle.innerText = report.angles?.stdMinAngle ? `${round1(report.angles.stdMinAngle)}°` : "--";
 
       if (!report.topFaults || report.topFaults.length === 0) {
-        reportFaults.innerText = "No major issues detected.";
+        reportFaults.innerText = "No major issues.";
       } else {
         reportFaults.innerHTML = report.topFaults.slice(0, 6)
           .map(x => `• ${escapeHtml(String(x.fault))} <span style="color:#6b7280;">(${x.count})</span>`)
@@ -1424,18 +1448,18 @@
       }
 
       if (!report.notesAuto || report.notesAuto.length === 0) {
-        reportNotesAuto.innerText = "No notes yet.";
+        reportNotesAuto.innerText = "—";
       } else {
         reportNotesAuto.innerHTML = report.notesAuto.map(n => `• ${escapeHtml(String(n))}`).join("<br/>");
       }
 
       if (!report.annotations || report.annotations.length === 0) {
-        reportAnnotations.innerText = "No annotations.";
+        reportAnnotations.innerText = "—";
       } else {
         reportAnnotations.innerHTML = report.annotations.slice(0, 20).map(a => {
           const img = a.imageDataUrl
             ? `<img class="report-anno-img" src="${a.imageDataUrl}" alt="Annotated frame"/>`
-            : `<div style="margin-top:8px;font-size:12px;color:#6b7280;">No screenshot saved for this annotation.</div>`;
+            : ``;
           return `
             <div class="report-anno-card">
               <div class="report-anno-meta">${escapeHtml(formatTime(a.timeSec))}</div>
@@ -1616,12 +1640,12 @@
 
           if (!playbackVideo.paused && processingActive) {
             if (stage === "up") {
-              feedbackText = (angle < cfg.upThreshold) ? ((type === 'curl') ? "Fully Extend" : "Lock Out") : "Start";
+              feedbackText = (angle < cfg.upThreshold) ? ((type === 'curl') ? "Extend" : "Lockout") : "Start";
               themeColor = (angle < cfg.upThreshold) ? "#fbbf24" : "#3b82f6";
 
               if (angle < cfg.downThreshold) {
                 stage = "down";
-                feedbackText = "Push";
+                feedbackText = "Go";
                 themeColor = "#22c55e";
                 repStartTime = playbackVideo.currentTime || 0;
                 currentRepMinAngle = angle;
@@ -1637,7 +1661,7 @@
                 const status = isGood ? "Good Rep" : "Bad Rep";
                 addHistoryItem(count, status, currentRepMinAngle, repStartTime);
 
-                feedbackText = isGood ? "Good Rep ✅" : "Go Deeper ⚠️";
+                feedbackText = isGood ? "Good ✅" : "Deeper ⚠️";
                 themeColor = isGood ? "#22c55e" : "#fbbf24";
 
                 stage = "up";
@@ -1645,12 +1669,12 @@
 
                 populateReportUI(buildSessionReport());
               } else {
-                feedbackText = "Working...";
+                feedbackText = "Working…";
                 themeColor = "#22c55e";
               }
             }
           } else {
-            feedbackText = (stage === "down") ? "Working..." : "Start";
+            feedbackText = (stage === "down") ? "Working…" : "Start";
           }
         }
       } else {
@@ -1661,7 +1685,7 @@
       document.getElementById('feedback').innerText = feedbackText;
 
       if (feedbackText !== lastFeedbackText) {
-        if (feedbackText && !["IDLE","Start","Working...","Not detected","Push"].includes(feedbackText)) {
+        if (feedbackText && !["IDLE","Start","Working…","Working...","Not detected","Go"].includes(feedbackText)) {
           formFaultCounts[feedbackText] = (formFaultCounts[feedbackText] || 0) + 1;
         }
         lastFeedbackText = feedbackText;
@@ -1698,20 +1722,17 @@
       controlsOverlay.innerHTML = `
         <div class="row">
           <button id="btnPlayPause" class="primary">Play</button>
-          <button id="btnStepBack" title="Step back 0.05s">◀︎</button>
-          <button id="btnStepFwd" title="Step forward 0.05s">▶︎</button>
+          <button id="btnStepBack" title="Back 0.05s">◀︎</button>
+          <button id="btnStepFwd" title="Fwd 0.05s">▶︎</button>
           <div class="meta" id="timeLabel">0:00 / 0:00</div>
 
           <div class="ml-auto flex gap-2">
-            <button id="btnSpeed" title="Playback speed">1.0×</button>
-            <button id="btnToggleControls" title="Minimize controls">Hide</button>
+            <button id="btnSpeed" title="Speed">1.0×</button>
+            <button id="btnToggleControls" title="Minimize">Hide</button>
           </div>
         </div>
         <div class="row mt-2">
           <input id="scrubber" type="range" min="0" max="1000" value="0" />
-        </div>
-        <div class="row mt-2">
-          <div class="meta">Shortcuts: Space Play/Pause • A Annotate • ESC Exit • ←/→ Seek</div>
         </div>
       `;
 
@@ -1757,7 +1778,6 @@
       const minimized = controlsOverlay.classList.toggle("minimized");
 
       if (minimized) {
-        // ✅ tiny pill mode (phone-friendly)
         controlsOverlay.innerHTML = `
           <div class="row">
             <button id="btnRestoreControls" class="primary">Show</button>
@@ -1792,7 +1812,7 @@
           requestAnimationFrame(processLoop);
         } catch (e) {
           console.error("play() blocked:", e);
-          alert("Playback blocked by browser. Tap once on the page, then try Play again.");
+          alert("Tap once on the page, then press Play.");
         }
       } else {
         safePauseVideo();
@@ -1815,15 +1835,11 @@
       if (btnSpeed) btnSpeed.textContent = `${SPEEDS[speedIndex].toFixed(2).replace(/\.00$/, ".0")}×`;
     }
 
-    // ✅ Tap/click on video area toggles play (but NEVER during annotate and never when clicking overlays)
     videoContainer.addEventListener("click", (e) => {
       if (annotateMode) return;
-
       const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
       if (tag === "button" || tag === "input" || tag === "select" || tag === "textarea") return;
-
       if (e.target.closest && (e.target.closest("#controlsOverlay") || e.target.closest("#annotationOverlay"))) return;
-
       if (!playbackVideo.src) return;
       togglePlayPause();
     });
@@ -1849,11 +1865,17 @@
       recordingLayer.classList.add('hidden');
       analysisLayer.classList.remove('hidden');
 
+      // remove camera-big by default
+      videoContainer.classList.remove("camera-big");
+
       clearPlaybackSrc();
       lastResults = null;
 
       annotationOverlay.style.display = "none";
       replayOverlay.classList.add("hidden");
+
+      // hide download recording button until we have a recording
+      btnDownloadVideo.classList.add("hidden");
 
       updateTimeUI();
       updatePlayPauseUI();
@@ -1882,11 +1904,50 @@
       }
 
       applyResponsiveControlsPolicy();
+      applyAnnoPanelPolicy();
     }
 
     // ---------------------------
-    // CAMERA
+    // CAMERA + RECORDING DOWNLOAD
     // ---------------------------
+    function pickBestMimeType() {
+      const candidates = [
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm",
+        "video/mp4" // usually not supported by MediaRecorder, but keep as last fallback
+      ];
+      for (const t of candidates) {
+        try {
+          if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) return t;
+        } catch {}
+      }
+      return "";
+    }
+
+    function setRecordingDownload(url, mime) {
+      lastRecordingUrl = url;
+      lastRecordingMime = mime || "video/webm";
+      btnDownloadVideo.classList.remove("hidden");
+    }
+
+    function downloadRecordedVideo() {
+      if (!lastRecordingUrl) return alert("No recording available yet.");
+      const ext = (lastRecordingMime && lastRecordingMime.includes("mp4")) ? "mp4" : "webm";
+      const filename = `Workout_${new Date().toISOString().replaceAll(":", "-")}.${ext}`;
+
+      // Try direct download
+      const a = document.createElement("a");
+      a.href = lastRecordingUrl;
+      a.download = filename;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      // iOS may open it instead of saving; user can "Save to Files" from share sheet.
+    }
+
     async function getCameras() {
       try {
         await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -1896,7 +1957,7 @@
         cameraSelect.innerHTML = '';
         if (videoDevices.length === 0) {
           const option = document.createElement('option');
-          option.text = "No Camera Found";
+          option.text = "No Camera";
           cameraSelect.appendChild(option);
           return;
         }
@@ -1914,10 +1975,10 @@
 
     async function startCamera() {
       try {
-        cameraStatus.innerText = "Opening...";
+        cameraStatus.innerText = "Opening…";
         if (!window.isSecureContext) {
-          alert("Camera requires HTTPS or http://localhost. Do NOT open via file://");
-          cameraStatus.innerText = "Blocked (HTTPS required)";
+          alert("Camera needs HTTPS or http://localhost (not file://).");
+          cameraStatus.innerText = "Blocked";
           return;
         }
 
@@ -1952,15 +2013,18 @@
         analysisLayer.classList.add('hidden');
         recordingLayer.classList.remove('hidden');
 
+        // ✅ Make camera preview bigger on phone
+        if (isPhoneLayout()) videoContainer.classList.add("camera-big");
+
         btnStartCamera.classList.add('hidden');
         cameraSelect.classList.add('hidden');
         btnRecord.classList.remove('hidden');
         cameraStatus.innerText = "Active";
       } catch (err) {
         console.error("Camera Error:", err);
-        if (err.name === "NotAllowedError") alert("Camera permission denied. Allow camera in site settings.");
-        else if (err.name === "NotFoundError") alert("No camera found on this device.");
-        else if (err.name === "NotReadableError") alert("Camera is being used by another app (Zoom/Teams/OBS). Close it.");
+        if (err.name === "NotAllowedError") alert("Camera permission denied.");
+        else if (err.name === "NotFoundError") alert("No camera found.");
+        else if (err.name === "NotReadableError") alert("Camera is busy (close other apps).");
         else alert("Could not start camera.\nError: " + err.message);
         cameraStatus.innerText = "Error";
       }
@@ -1972,59 +2036,75 @@
         cameraStream = null;
       }
       livePreview.srcObject = null;
+      videoContainer.classList.remove("camera-big");
     }
 
     function toggleRecording() {
       if (!cameraStream || cameraStream.getVideoTracks().length === 0) {
-        alert("Camera is not active. Click Activate first.");
+        alert("Activate camera first.");
         return;
       }
 
       if (!isRecording) {
         recordedChunks = [];
-        try { mediaRecorder = new MediaRecorder(cameraStream); }
-        catch (e) { alert("Browser not supported for recording."); return; }
+        const mime = pickBestMimeType();
 
-        mediaRecorder.ondataavailable = (event) => { if (event.data && event.data.size > 0) recordedChunks.push(event.data); };
-        mediaRecorder.onstop = () => completeRecording();
+        try {
+          mediaRecorder = mime ? new MediaRecorder(cameraStream, { mimeType: mime }) : new MediaRecorder(cameraStream);
+        } catch (e) {
+          alert("Recording not supported in this browser.");
+          return;
+        }
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) recordedChunks.push(event.data);
+        };
+        mediaRecorder.onstop = () => completeRecording(mediaRecorder.mimeType || mime || "video/webm");
 
         mediaRecorder.start();
         isRecording = true;
 
-        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-sm"></div><span>End Workout</span>`;
+        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-sm"></div><span>Stop</span>`;
         btnRecord.classList.remove('bg-red-600');
         btnRecord.classList.add('bg-gray-600');
         recordingIndicator.classList.remove('hidden');
         recordingLayer.classList.add('recording-pulse');
-        cameraStatus.innerText = "Recording...";
+        cameraStatus.innerText = "Recording…";
       } else {
         mediaRecorder.stop();
         isRecording = false;
 
-        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-full"></div><span>Start Recording</span>`;
+        btnRecord.innerHTML = `<div class="w-2.5 h-2.5 bg-white rounded-full"></div><span>Record</span>`;
         btnRecord.classList.remove('bg-gray-600');
         btnRecord.classList.add('bg-red-600');
         recordingIndicator.classList.add('hidden');
         recordingLayer.classList.remove('recording-pulse');
-        cameraStatus.innerText = "Processing...";
+        cameraStatus.innerText = "Processing…";
       }
     }
 
-    function completeRecording() {
+    function completeRecording(mimeType) {
       if (recordedChunks.length === 0) {
-        alert("Recording failed: No data captured.");
+        alert("Recording failed (no data).");
         stopCamera();
         setMode('camera');
         return;
       }
 
-      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      // Make one blob for playback
+      const blob = new Blob(recordedChunks, { type: mimeType || "video/webm" });
       const url = URL.createObjectURL(blob);
+
+      // Store url for download button
+      setRecordingDownload(url, mimeType || "video/webm");
+
+      // Also set playback
       activeBlobUrl = url;
 
       stopCamera();
       recordingLayer.classList.add('hidden');
       analysisLayer.classList.remove('hidden');
+      videoContainer.classList.remove("camera-big");
 
       prepareVideoForMobile(playbackVideo);
       playbackVideo.src = url;
@@ -2043,6 +2123,8 @@
         try { await playbackVideo.play(); } catch (e) {}
         await startProcessing();
         applyResponsiveControlsPolicy();
+        applyAnnoPanelPolicy();
+        cameraStatus.innerText = "Done";
       };
 
       playbackVideo.onended = () => {
@@ -2076,7 +2158,7 @@
 
       if (typeof Pose === "undefined") {
         loader.classList.add('hidden');
-        alert("MediaPipe Pose failed to load. Check your internet / CDN access.");
+        alert("MediaPipe Pose failed to load (CDN blocked?).");
         return;
       }
 
@@ -2106,6 +2188,8 @@
     btnRecord.addEventListener("click", toggleRecording);
     btnReplay.addEventListener("click", replayVideo);
 
+    btnDownloadVideo.addEventListener("click", downloadRecordedVideo);
+
     btnDownloadReport.addEventListener("click", () => {
       const report = buildSessionReport();
       downloadJson(`${report.sessionId}_${report.exerciseType}.json`, report);
@@ -2120,6 +2204,7 @@
       updatePlayPauseUI();
       renderFrame();
       applyResponsiveControlsPolicy();
+      applyAnnoPanelPolicy();
     });
 
     btnDownloadPDF.addEventListener("click", async () => {
@@ -2150,24 +2235,27 @@
         updatePlayPauseUI();
         renderFrame();
         applyResponsiveControlsPolicy();
+        applyAnnoPanelPolicy();
 
         try {
           await playbackVideo.play();
           await startProcessing();
           updatePlayPauseUI();
           applyResponsiveControlsPolicy();
+          applyAnnoPanelPolicy();
         } catch (err) {
           console.error("Video play blocked:", err);
           safePauseVideo();
           renderFrame();
           updatePlayPauseUI();
-          alert("Autoplay blocked (normal on phones). Tap Play to start.");
+          alert("Tap Play to start.");
         }
       };
 
       playbackVideo.onended = () => {
         processingActive = false;
         replayOverlay.classList.remove('hidden');
+A
         updatePlayPauseUI();
       };
     });
@@ -2175,7 +2263,7 @@
     // Annotation buttons
     btnAnnotate.addEventListener("click", () => enterAnnotateMode());
     btnClearDrawing.addEventListener("click", () => {
-      if (!annotateMode) return alert("Click Annotate Frame first (or press A).");
+      if (!annotateMode) return alert("Tap Annotate first.");
       clearDrawing();
     });
     btnSaveAnnotation.addEventListener("click", () => saveAnnotation());
@@ -2249,12 +2337,14 @@
       fitCanvasToContainer();
       renderFrame();
       applyResponsiveControlsPolicy();
+      applyAnnoPanelPolicy();
     });
     window.addEventListener("orientationchange", () => {
       setTimeout(() => {
         fitCanvasToContainer();
         renderFrame();
         applyResponsiveControlsPolicy();
+        applyAnnoPanelPolicy();
       }, 250);
     });
 
@@ -2277,6 +2367,7 @@
 
       fitCanvasToContainer();
       applyResponsiveControlsPolicy();
+      applyAnnoPanelPolicy();
     });
   </script>
 </body>
