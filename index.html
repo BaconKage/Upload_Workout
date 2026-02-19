@@ -484,6 +484,7 @@
         <label class="block text-gray-400 text-xs uppercase tracking-wider font-semibold mb-2">Exercise</label>
         <select id="exerciseType"
                 class="w-full bg-gray-900 border border-gray-600 rounded p-2.5 text-white focus:ring-2 focus:ring-blue-500 outline-none">
+          <option value="auto" selected>Auto Detect</option>
           <option value="pushup">Push-up</option>
           <option value="squat">Squat</option>
           <option value="curl">Bicep Curl</option>
@@ -929,6 +930,23 @@
       curl:   { upThreshold: 150, downThreshold: 60,  goodRepLimit: 75  }
     };
 
+    // auto detection (observe first, then lock)
+    const AUTO_HISTORY_MAX = 36;
+    const AUTO_LOCK_FRAMES = 12;
+    const AUTO_IDLE_FRAMES = 24;
+    const AUTO_SWITCH_FRAMES = 14;
+    const AUTO_MIN_SCORE = 1.05;
+    const AUTO_MIN_MARGIN = 0.16;
+    const AUTO_MIN_MOTION = 8;
+    const AUTO_SCORE_DECAY = 0.88;
+
+    let autoDetectedType = null;
+    let autoCandidateType = null;
+    let autoCandidateFrames = 0;
+    let autoNoExerciseFrames = 0;
+    let autoTypeScores = { squat: 0, pushup: 0, curl: 0 };
+    let autoHistory = { squatAngles: [], armAngles: [], torsoInclinations: [], shoulderHipDeltas: [], hipAnkleDeltas: [] };
+
     // ---------------------------
     // RESPONSIVE / MOBILE HELPERS
     // ---------------------------
@@ -990,6 +1008,226 @@
     }
     function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
     function round1(n) { return Math.round(n * 10) / 10; }
+    function isFiniteNumber(n) { return Number.isFinite(n); }
+    function pushRolling(arr, value, maxLen) {
+      arr.push(value);
+      if (arr.length > maxLen) arr.shift();
+    }
+    function rangeOf(arr) {
+      const vals = arr.filter(isFiniteNumber);
+      if (!vals.length) return 0;
+      return Math.max(...vals) - Math.min(...vals);
+    }
+    function getExerciseLabel(type) {
+      if (type === "pushup") return "Push-up";
+      if (type === "squat") return "Squat";
+      if (type === "curl") return "Bicep Curl";
+      if (type === "auto") return "Auto Detect";
+      return "No exercise detected";
+    }
+    function getReportExerciseType() {
+      const selected = exerciseSelect.value;
+      if (selected !== "auto") return selected;
+      return autoDetectedType || "none";
+    }
+    function resetAutoDetectionState() {
+      autoDetectedType = null;
+      autoCandidateType = null;
+      autoCandidateFrames = 0;
+      autoNoExerciseFrames = 0;
+      autoTypeScores = { squat: 0, pushup: 0, curl: 0 };
+      autoHistory = { squatAngles: [], armAngles: [], torsoInclinations: [], shoulderHipDeltas: [], hipAnkleDeltas: [] };
+    }
+    function updateFeedbackText(feedbackText) {
+      document.getElementById('feedback').innerText = feedbackText;
+      if (feedbackText !== lastFeedbackText) {
+        if (feedbackText && !["IDLE","Start","Working...","Not detected","No exercise detected","Push"].includes(feedbackText)) {
+          formFaultCounts[feedbackText] = (formFaultCounts[feedbackText] || 0) + 1;
+        }
+        lastFeedbackText = feedbackText;
+      }
+    }
+    function getSquatTriplet(landmarks) {
+      const leftScore  = landmarks[23].visibility + landmarks[25].visibility + landmarks[27].visibility;
+      const rightScore = landmarks[24].visibility + landmarks[26].visibility + landmarks[28].visibility;
+      if (leftScore >= rightScore) return { a: landmarks[23], b: landmarks[25], c: landmarks[27], side: "Left Leg", score: leftScore };
+      return { a: landmarks[24], b: landmarks[26], c: landmarks[28], side: "Right Leg", score: rightScore };
+    }
+    function getArmTriplet(landmarks) {
+      const leftScore  = landmarks[11].visibility + landmarks[13].visibility + landmarks[15].visibility;
+      const rightScore = landmarks[12].visibility + landmarks[14].visibility + landmarks[16].visibility;
+      if (leftScore >= rightScore) return { a: landmarks[11], b: landmarks[13], c: landmarks[15], side: "Left Arm", score: leftScore };
+      return { a: landmarks[12], b: landmarks[14], c: landmarks[16], side: "Right Arm", score: rightScore };
+    }
+    function resolveAutoExerciseType(landmarks) {
+      const squat = getSquatTriplet(landmarks);
+      const arm = getArmTriplet(landmarks);
+
+      const hasSquat = squat.a.visibility > 0.35 && squat.b.visibility > 0.35 && squat.c.visibility > 0.35;
+      const hasArm = arm.a.visibility > 0.35 && arm.b.visibility > 0.35 && arm.c.visibility > 0.35;
+      const hasTorso = landmarks[11].visibility > 0.35 && landmarks[12].visibility > 0.35 && landmarks[23].visibility > 0.35 && landmarks[24].visibility > 0.35;
+      const hasLegSpan = landmarks[23].visibility > 0.35 && landmarks[24].visibility > 0.35 && landmarks[27].visibility > 0.35 && landmarks[28].visibility > 0.35;
+      const hasBothArms =
+        landmarks[11].visibility > 0.35 && landmarks[13].visibility > 0.35 && landmarks[15].visibility > 0.35 &&
+        landmarks[12].visibility > 0.35 && landmarks[14].visibility > 0.35 && landmarks[16].visibility > 0.35;
+      const hasFullLegs =
+        landmarks[23].visibility > 0.35 && landmarks[24].visibility > 0.35 &&
+        landmarks[25].visibility > 0.35 && landmarks[26].visibility > 0.35 &&
+        landmarks[27].visibility > 0.35 && landmarks[28].visibility > 0.35;
+
+      const squatAngle = hasSquat ? calculateAngle(squat.a, squat.b, squat.c) : NaN;
+      const armAngle = hasArm ? calculateAngle(arm.a, arm.b, arm.c) : NaN;
+      const leftArmAngle = hasBothArms ? calculateAngle(landmarks[11], landmarks[13], landmarks[15]) : NaN;
+      const rightArmAngle = hasBothArms ? calculateAngle(landmarks[12], landmarks[14], landmarks[16]) : NaN;
+      const leftKneeAngle = hasFullLegs ? calculateAngle(landmarks[23], landmarks[25], landmarks[27]) : NaN;
+      const rightKneeAngle = hasFullLegs ? calculateAngle(landmarks[24], landmarks[26], landmarks[28]) : NaN;
+      const shoulderMid = hasTorso
+        ? { x: (landmarks[11].x + landmarks[12].x) / 2, y: (landmarks[11].y + landmarks[12].y) / 2 }
+        : null;
+      const hipMid = hasTorso
+        ? { x: (landmarks[23].x + landmarks[24].x) / 2, y: (landmarks[23].y + landmarks[24].y) / 2 }
+        : null;
+      const ankleMid = hasLegSpan
+        ? { x: (landmarks[27].x + landmarks[28].x) / 2, y: (landmarks[27].y + landmarks[28].y) / 2 }
+        : null;
+      const torsoIncl = hasTorso
+        ? calculateInclination(
+            shoulderMid,
+            hipMid
+          )
+        : NaN;
+      const shoulderHipDy = (shoulderMid && hipMid) ? Math.abs(shoulderMid.y - hipMid.y) : NaN;
+      const hipAnkleDy = (hipMid && ankleMid) ? Math.abs(hipMid.y - ankleMid.y) : NaN;
+      const hipY = hasFullLegs ? ((landmarks[23].y + landmarks[24].y) / 2) : NaN;
+      const kneeY = hasFullLegs ? ((landmarks[25].y + landmarks[26].y) / 2) : NaN;
+      const ankleY = hasFullLegs ? ((landmarks[27].y + landmarks[28].y) / 2) : NaN;
+
+      pushRolling(autoHistory.squatAngles, squatAngle, AUTO_HISTORY_MAX);
+      pushRolling(autoHistory.armAngles, armAngle, AUTO_HISTORY_MAX);
+      pushRolling(autoHistory.torsoInclinations, torsoIncl, AUTO_HISTORY_MAX);
+      pushRolling(autoHistory.shoulderHipDeltas, shoulderHipDy, AUTO_HISTORY_MAX);
+      pushRolling(autoHistory.hipAnkleDeltas, hipAnkleDy, AUTO_HISTORY_MAX);
+
+      const squatRange = rangeOf(autoHistory.squatAngles);
+      const armRange = rangeOf(autoHistory.armAngles);
+      const torsoVals = autoHistory.torsoInclinations.filter(isFiniteNumber);
+      const torsoMean = torsoVals.length ? mean(torsoVals) : 0;
+      const shoulderHipVals = autoHistory.shoulderHipDeltas.filter(isFiniteNumber);
+      const hipAnkleVals = autoHistory.hipAnkleDeltas.filter(isFiniteNumber);
+      const shoulderHipMean = shoulderHipVals.length ? mean(shoulderHipVals) : shoulderHipDy;
+      const hipAnkleMean = hipAnkleVals.length ? mean(hipAnkleVals) : hipAnkleDy;
+      const motion = Math.max(squatRange, armRange);
+
+      autoTypeScores.squat *= AUTO_SCORE_DECAY;
+      autoTypeScores.pushup *= AUTO_SCORE_DECAY;
+      autoTypeScores.curl *= AUTO_SCORE_DECAY;
+
+      const legBendNow = clamp((155 - (isFiniteNumber(squatAngle) ? squatAngle : 180)) / 45, 0, 1.4);
+      const armBendNow = clamp((145 - (isFiniteNumber(armAngle) ? armAngle : 180)) / 55, 0, 1.3);
+      const avgKneeAngle = (isFiniteNumber(leftKneeAngle) && isFiniteNumber(rightKneeAngle))
+        ? (leftKneeAngle + rightKneeAngle) / 2
+        : (isFiniteNumber(leftKneeAngle) ? leftKneeAngle : rightKneeAngle);
+      const legExtensionScore = clamp(((isFiniteNumber(avgKneeAngle) ? avgKneeAngle : 120) - 150) / 22, 0, 1.2);
+      const uprightLegChainScore = (isFiniteNumber(hipY) && isFiniteNumber(kneeY) && isFiniteNumber(ankleY))
+        ? (clamp((kneeY - hipY - 0.035) / 0.16, 0, 1.2) + clamp((ankleY - kneeY - 0.035) / 0.2, 0, 1.2)) / 2
+        : 0;
+      const armSymmetryScore = (isFiniteNumber(leftArmAngle) && isFiniteNumber(rightArmAngle))
+        ? (1 - clamp(Math.abs(leftArmAngle - rightArmAngle) / 30, 0, 1))
+        : 0;
+      const dualArmPushScore = (isFiniteNumber(leftArmAngle) && isFiniteNumber(rightArmAngle))
+        ? armSymmetryScore * clamp((170 - ((leftArmAngle + rightArmAngle) / 2)) / 55, 0, 1.3)
+        : 0;
+
+      const plankPostureScore =
+        clamp((0.17 - (isFiniteNumber(shoulderHipMean) ? shoulderHipMean : 0.3)) / 0.11, 0, 1.2) +
+        clamp((0.2 - (isFiniteNumber(hipAnkleMean) ? hipAnkleMean : 0.3)) / 0.13, 0, 1.0) +
+        clamp((torsoMean - 48) / 22, 0, 1.0);
+      const uprightPostureScore =
+        clamp(((isFiniteNumber(shoulderHipMean) ? shoulderHipMean : 0) - 0.2) / 0.14, 0, 1.2) +
+        clamp(((isFiniteNumber(hipAnkleMean) ? hipAnkleMean : 0) - 0.2) / 0.16, 0, 1.0) +
+        clamp((38 - torsoMean) / 20, 0, 1.0);
+
+      if (hasSquat) {
+        autoTypeScores.squat += clamp((squatRange - 14) / 22, 0, 1.6);
+        autoTypeScores.squat += legBendNow;
+        autoTypeScores.squat += clamp((uprightPostureScore - 0.3) / 1.4, 0, 0.9);
+      }
+      if (hasArm) {
+        const armDyn = clamp((armRange - 12) / 20, 0, 1.5);
+        autoTypeScores.pushup += armDyn;
+        autoTypeScores.pushup += armBendNow * 0.5;
+        autoTypeScores.pushup += plankPostureScore * 1.45;
+        autoTypeScores.pushup += dualArmPushScore * 1.05;
+
+        autoTypeScores.curl += armDyn;
+        autoTypeScores.curl += armBendNow * 0.7;
+        autoTypeScores.curl += uprightPostureScore * 1.65;
+        autoTypeScores.curl += uprightLegChainScore * 1.4;
+        autoTypeScores.curl += legExtensionScore * 1.0;
+        // Fallback when legs are cropped: rely on upright torso + isolated arm motion.
+        if (!hasFullLegs) {
+          autoTypeScores.curl += uprightPostureScore * 0.75;
+          autoTypeScores.curl += clamp((armRange - 10) / 16, 0, 0.9);
+        }
+      }
+
+      // Strong anti-confusion guards: curl must be clearly upright.
+      if (plankPostureScore > 0.8) autoTypeScores.curl *= 0.18;
+      if (squatRange > 16 || legBendNow > 0.8) autoTypeScores.curl *= 0.25;
+      if (dualArmPushScore > 0.45) autoTypeScores.curl *= 0.45;
+      if (uprightLegChainScore < 0.55 || legExtensionScore < 0.45) autoTypeScores.curl *= 0.32;
+      if (!hasFullLegs) autoTypeScores.curl *= 0.78;
+      if (uprightPostureScore > 1.1) autoTypeScores.pushup *= 0.62;
+      if (plankPostureScore > 1.0) autoTypeScores.squat *= 0.65;
+      if (hasSquat && (squatRange > 18 || legBendNow > 0.9) && uprightPostureScore > 0.6) autoTypeScores.squat += 1.2;
+
+      const ranked = Object.entries(autoTypeScores).sort((a, b) => b[1] - a[1]);
+      const bestType = ranked[0][0];
+      const bestScore = ranked[0][1];
+      const margin = bestScore - ranked[1][1];
+
+      const curlStrict = uprightPostureScore > 0.95 && plankPostureScore < 0.55 && uprightLegChainScore > 0.55 && legExtensionScore > 0.45 && armRange > 12;
+      const curlFallbackCropped =
+        !hasFullLegs &&
+        uprightPostureScore > 0.9 &&
+        plankPostureScore < 0.55 &&
+        armRange > 11 &&
+        dualArmPushScore < 0.52 &&
+        squatRange < 14 &&
+        legBendNow < 0.72;
+      const typeSpecificConfidence =
+        (bestType === "curl"   && (curlStrict || curlFallbackCropped)) ||
+        (bestType === "pushup" && plankPostureScore > 0.75 && armRange > 10) ||
+        (bestType === "squat"  && (squatRange > 12 || legBendNow > 0.6));
+
+      const confident = motion >= AUTO_MIN_MOTION && bestScore >= AUTO_MIN_SCORE && margin >= AUTO_MIN_MARGIN && typeSpecificConfidence;
+      if (!confident) {
+        autoNoExerciseFrames += 1;
+        autoCandidateType = null;
+        autoCandidateFrames = 0;
+        if (autoNoExerciseFrames >= AUTO_IDLE_FRAMES) autoDetectedType = null;
+        return autoDetectedType;
+      }
+
+      autoNoExerciseFrames = 0;
+      if (autoCandidateType === bestType) autoCandidateFrames += 1;
+      else {
+        autoCandidateType = bestType;
+        autoCandidateFrames = 1;
+      }
+
+      if (!autoDetectedType && autoCandidateFrames >= AUTO_LOCK_FRAMES) {
+        autoDetectedType = autoCandidateType;
+        autoCandidateFrames = 0;
+      } else if (autoDetectedType && autoCandidateType !== autoDetectedType && autoCandidateFrames >= AUTO_SWITCH_FRAMES) {
+        autoDetectedType = autoCandidateType;
+        autoCandidateFrames = 0;
+        stage = "up";
+        currentRepMinAngle = 360;
+      }
+
+      return autoDetectedType;
+    }
 
     function formatTime(seconds) {
       seconds = Math.max(0, seconds || 0);
@@ -1049,6 +1287,7 @@
       lastFeedbackText = "IDLE";
       formFaultCounts = {};
       lastResults = null;
+      resetAutoDetectionState();
 
       if (!sessionId) sessionId = "sess_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
       if (!sessionStartTimeISO) sessionStartTimeISO = new Date().toISOString();
@@ -1088,6 +1327,7 @@
 
       lastResults = null;
       lastPlaybackTime = 0;
+      resetAutoDetectionState();
 
       document.getElementById('repCount').innerText = "0";
       document.getElementById('currentAngle').innerText = "--°";
@@ -1610,12 +1850,16 @@
       if (type === "squat") notes.push("Squat cue: chest up, knees track, consistent depth.");
       if (type === "pushup") notes.push("Push-up cue: strong plank line, avoid hip sag.");
       if (type === "curl") notes.push("Curl cue: elbows pinned, avoid torso swing.");
+      if (type === "none") notes.push("No clear exercise pattern detected in this clip.");
 
       return notes;
     }
 
     function computeScores(type, repAngles, goodRepPct, avgMinAngle, stdMinAngle) {
       const cfg = CONFIG[type];
+      if (!cfg) {
+        return { goodRepPct: round1(goodRepPct || 0), stabilityScore: 0, depthScore: 0, overallScore: 0, verdict: "No exercise detected" };
+      }
       const stabilityScore = clamp(100 - (stdMinAngle * 4), 0, 100);
       const depthDelta = (avgMinAngle - cfg.goodRepLimit);
       const depthScore = clamp(100 - (depthDelta * 2.5), 0, 100);
@@ -1631,7 +1875,7 @@
     }
 
     function buildSessionReport() {
-      const type = exerciseSelect.value;
+      const type = getReportExerciseType();
 
       const totalReps = historyData.length;
       const goodReps = historyData.filter(r => r.status === "Good Rep").length;
@@ -1671,7 +1915,7 @@
 
     function populateReportUI(report) {
       reportMeta.innerText = `Session: ${report.sessionId || "--"} • ${new Date(report.createdAt || Date.now()).toLocaleString()}`;
-      reportExercise.innerText = (report.exerciseType || "--").toUpperCase();
+      reportExercise.innerText = getExerciseLabel(report.exerciseType || "--");
 
       reportTotalReps.innerText = report.totals?.totalReps ?? 0;
       reportGoodReps.innerText = report.totals?.goodReps ?? 0;
@@ -1835,29 +2079,34 @@
       if (!lastResults || !lastResults.poseLandmarks) return;
 
       const landmarks = lastResults.poseLandmarks;
-      const type = exerciseSelect.value;
-      const cfg = CONFIG[type];
+      const selectedType = exerciseSelect.value;
+      const type = selectedType === "auto" ? resolveAutoExerciseType(landmarks) : selectedType;
+      const cfg = type ? CONFIG[type] : null;
+
+      if (!cfg) {
+        stage = "up";
+        currentRepMinAngle = 360;
+        document.getElementById('currentAngle').innerText = "--Â°";
+        document.getElementById('trackingSide').innerText = "--";
+        updateFeedbackText("No exercise detected");
+        return;
+      }
 
       let a, b, c, trackedSide = "";
 
       if (type === 'squat') {
-        const leftScore  = landmarks[23].visibility + landmarks[25].visibility + landmarks[27].visibility;
-        const rightScore = landmarks[24].visibility + landmarks[26].visibility + landmarks[28].visibility;
-
-        if (leftScore > rightScore) { a = landmarks[23]; b = landmarks[25]; c = landmarks[27]; trackedSide = "Left Leg"; }
-        else { a = landmarks[24]; b = landmarks[26]; c = landmarks[28]; trackedSide = "Right Leg"; }
+        const squat = getSquatTriplet(landmarks);
+        a = squat.a; b = squat.b; c = squat.c; trackedSide = squat.side;
       } else {
-        const leftScore  = landmarks[11].visibility + landmarks[13].visibility + landmarks[15].visibility;
-        const rightScore = landmarks[12].visibility + landmarks[14].visibility + landmarks[16].visibility;
-
-        if (leftScore > rightScore) { a = landmarks[11]; b = landmarks[13]; c = landmarks[15]; trackedSide = "Left Arm"; }
-        else { a = landmarks[12]; b = landmarks[14]; c = landmarks[16]; trackedSide = "Right Arm"; }
+        const arm = getArmTriplet(landmarks);
+        a = arm.a; b = arm.b; c = arm.c; trackedSide = arm.side;
       }
 
       let feedbackText = "Not detected";
       let themeColor = "#ef4444";
 
-      document.getElementById('trackingSide').innerText = trackedSide || "--";
+      if (selectedType === "auto") document.getElementById('trackingSide').innerText = `${getExerciseLabel(type)} • ${trackedSide || "--"}`;
+      else document.getElementById('trackingSide').innerText = trackedSide || "--";
 
       if (a && b && c && (a.visibility > 0.3 && b.visibility > 0.3 && c.visibility > 0.3)) {
         const angle = calculateAngle(a, b, c);
@@ -1928,14 +2177,7 @@
         document.getElementById('trackingSide').innerText = "--";
       }
 
-      document.getElementById('feedback').innerText = feedbackText;
-
-      if (feedbackText !== lastFeedbackText) {
-        if (feedbackText && !["IDLE","Start","Working...","Not detected","Push"].includes(feedbackText)) {
-          formFaultCounts[feedbackText] = (formFaultCounts[feedbackText] || 0) + 1;
-        }
-        lastFeedbackText = feedbackText;
-      }
+      updateFeedbackText(feedbackText);
     }
 
     function onResults(results) { lastResults = results; renderFrame(); }
@@ -2375,6 +2617,14 @@
     btnStartCamera.addEventListener("click", startCamera);
     btnRecord.addEventListener("click", toggleRecording);
     btnReplay.addEventListener("click", replayVideo);
+    exerciseSelect.addEventListener("change", () => {
+      stage = "up";
+      currentRepMinAngle = 360;
+      repStartTime = playbackVideo.currentTime || 0;
+      resetAutoDetectionState();
+      populateReportUI(buildSessionReport());
+      renderFrame();
+    });
 
     btnDownloadReport.addEventListener("click", () => {
       const report = buildSessionReport();
